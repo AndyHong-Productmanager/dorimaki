@@ -10,6 +10,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2';
 import { OpenCodeSdkError } from '../errors.js';
 import { createLogger, LogPrefix } from '../logger.js';
 import { getOpencodeServerAuthHeaders } from '../opencode.js';
+import { createOmoClient, isOmoEngine } from '../omo/client.js';
 const logger = createLogger(LogPrefix.SESSION);
 function isAbortError(err) {
     if (err instanceof DOMException && err.name === 'AbortError')
@@ -128,6 +129,9 @@ async function resolveBaseUrlGetter() {
     return _getBaseUrl;
 }
 function createGlobalClient(baseUrl) {
+    if (isOmoEngine()) {
+        return createOmoClient({ directory: '' });
+    }
     return createOpencodeClient({ baseUrl, headers: getOpencodeServerAuthHeaders() });
 }
 function dispatchEvent(globalEvent) {
@@ -143,7 +147,7 @@ async function runEventLoop() {
     while (!disposed) {
         controller = new AbortController();
         const signal = controller.signal;
-        const baseUrl = getBaseUrl();
+        const baseUrl = isOmoEngine() ? 'omo://app-server' : getBaseUrl();
         if (!baseUrl) {
             if (callbacks.size === 0) {
                 logger.log('[GLOBAL LISTENER] No registrations, pausing');

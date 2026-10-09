@@ -67,6 +67,7 @@ import { DirectoryNotAccessibleError, ServerStartError, ServerNotReadyError, Fet
 import { ensureDorimakiCommandShim, getIncompatibleOpencodeVersionError, getPathEnvKey, getSpawnCommandAndArgs, prependPathEntry, selectResolvedCommand, } from './opencode-command.js';
 import { execAsync } from './exec-async.js';
 import { computeSkillPermission } from './skill-filter.js';
+import { isOmoEngine } from './omo/client.js';
 const opencodeLogger = createLogger(LogPrefix.OPENCODE);
 /**
  * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
@@ -242,6 +243,17 @@ function notifyServerLifecycle(event) {
     }
 }
 export function subscribeOpencodeServerLifecycle(listener) {
+    if (isOmoEngine()) {
+        let omoUnsub = null;
+        void import('./omo/server.js').then(({ subscribeOmoServerLifecycle }) => {
+            omoUnsub = subscribeOmoServerLifecycle((event) => {
+                if (event.type === 'started') {
+                    listener({ type: 'started', port: event.port });
+                }
+            });
+        });
+        return () => omoUnsub?.();
+    }
     serverLifecycleListeners.add(listener);
     return () => {
         serverLifecycleListeners.delete(listener);
@@ -878,6 +890,15 @@ export async function initializeOpencodeForDirectory(directory, _options) {
     });
     if (accessCheck instanceof Error)
         return accessCheck;
+    if (isOmoEngine()) {
+        const { ensureOmoServer } = await import('./omo/server.js');
+        const { createOmoClient } = await import('./omo/client.js');
+        const server = await ensureOmoServer();
+        if (server instanceof Error) {
+            return new ServerStartError({ port: 0, reason: server.message });
+        }
+        return () => createOmoClient({ directory });
+    }
     preferredStartupDirectory = directory;
     const server = await ensureSingleServer({ directory });
     if (server instanceof Error)
@@ -1117,6 +1138,10 @@ export function getOpencodeServerBaseUrl() {
     return singleServer?.baseUrl ?? null;
 }
 export function getOpencodeClient(directory) {
+    if (isOmoEngine()) {
+        const { createOmoClient } = require_omoClient();
+        return createOmoClient({ directory });
+    }
     if (!singleServer) {
         return null;
     }
@@ -1124,6 +1149,12 @@ export function getOpencodeClient(directory) {
         baseUrl: singleServer.baseUrl,
         directory,
     });
+}
+// Static import of omo/client would create a cycle (omo/server does not import
+// opencode.ts, but keeping the lazy boundary mirrors the existing pattern).
+import * as omoClientModule from './omo/client.js';
+function require_omoClient() {
+    return omoClientModule;
 }
 /**
  * Extract a human-readable message from an OpenCode SDK error response.

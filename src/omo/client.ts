@@ -239,6 +239,11 @@ export type OmoClientOptions = {
   directory: string
 }
 
+/** Engine switch: dorimaki defaults to omo; set DORIMAKI_ENGINE=opencode for the legacy path. */
+export function isOmoEngine(): boolean {
+  return process.env.DORIMAKI_ENGINE !== 'opencode'
+}
+
 export function createOmoClient({ directory }: OmoClientOptions) {
   const session = {
     async create(params?: Json) {

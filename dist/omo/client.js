@@ -212,6 +212,10 @@ function threadToMessages(thread) {
     }
     return [...messages.values()];
 }
+/** Engine switch: dorimaki defaults to omo; set DORIMAKI_ENGINE=opencode for the legacy path. */
+export function isOmoEngine() {
+    return process.env.DORIMAKI_ENGINE !== 'opencode';
+}
 export function createOmoClient({ directory }) {
     const session = {
         async create(params) {
