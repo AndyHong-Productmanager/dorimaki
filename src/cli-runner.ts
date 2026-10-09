@@ -89,7 +89,7 @@ export const cliLogger = createLogger(LogPrefix.CLI)
 // These are hardcoded because they're deploy-time constants for the gateway infrastructure.
 export const DORIMAKI_GATEWAY_PROXY_URL =
   process.env.DORIMAKI_GATEWAY_PROXY_URL ||
-  'wss://discord-gateway.DORIMAKIDOTDEV'
+  'wss://discord-gateway.kimaki.dev'
 
 export const DORIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
   gatewayUrl: DORIMAKI_GATEWAY_PROXY_URL,
@@ -566,7 +566,7 @@ const TRANSIENT_ERROR_CODES = new Set([
   'ERR_TLS_CERT_ALTNAME_INVALID',
   // undici fetch/WebSocket connect failures when the network is down.
   // Without these, Discord login exits EXIT_NO_RESTART and the wrapper never
-  // comes back after a connect timeout to discord-gateway.DORIMAKIDOTDEV.
+  // comes back after a connect timeout to discord-gateway.kimaki.dev.
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT',

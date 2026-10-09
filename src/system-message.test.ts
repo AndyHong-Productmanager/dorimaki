@@ -385,7 +385,7 @@ describe('system-message', () => {
 
     expect(message).toMatchInlineSnapshot(`
       "
-      The user is reading your messages from inside Discord, via DORIMAKIDOTDEV
+      The user is reading your messages from inside Discord, via kimaki.dev
 
       ## Discord output
 
@@ -440,7 +440,7 @@ describe('system-message', () => {
 
       ## debugging dorimaki issues
 
-      ALWAYS read https://DORIMAKIDOTDEV/docs/guides/report-bugs first before submitting any issue to Dorimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/dorimaki unless remorses asked for one in a comment on the issue.
+      ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Dorimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/dorimaki unless remorses asked for one in a comment on the issue.
       If there are internal dorimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`<data-dir>/dorimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
       ## uploading files to discord

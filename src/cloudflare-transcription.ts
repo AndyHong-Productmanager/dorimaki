@@ -1,4 +1,4 @@
-// Free Whisper transcription fallback via the DORIMAKIDOTDEV Cloudflare Worker.
+// Free Whisper transcription fallback via the kimaki.dev Cloudflare Worker.
 // Only usable in gateway mode: the worker authenticates the request against
 // the shared gateway_clients Postgres table using the CLI's own
 // clientId:clientSecret pair (the same credentials already used for
@@ -19,7 +19,7 @@ import { createLogger, LogPrefix } from './logger.js'
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
 const DORIMAKI_TRANSCRIBE_URL =
-  process.env.DORIMAKI_TRANSCRIBE_URL || 'https://DORIMAKIDOTDEV/api/transcribe'
+  process.env.DORIMAKI_TRANSCRIBE_URL || 'https://kimaki.dev/api/transcribe'
 
 export async function transcribeViaDorimakiGateway({
   audio,
@@ -43,7 +43,7 @@ export async function transcribeViaDorimakiGateway({
     body: audio,
   }).catch((cause) => {
     return new TranscriptionError({
-      reason: 'Failed to reach DORIMAKIDOTDEV transcription endpoint',
+      reason: 'Failed to reach kimaki.dev transcription endpoint',
       cause,
     })
   })
@@ -55,7 +55,7 @@ export async function transcribeViaDorimakiGateway({
       `Dorimaki gateway transcription failed: ${response.status} ${bodyText}`,
     )
     return new TranscriptionError({
-      reason: `DORIMAKIDOTDEV returned ${response.status}${bodyText ? `: ${bodyText}` : ''}`,
+      reason: `kimaki.dev returned ${response.status}${bodyText ? `: ${bodyText}` : ''}`,
     })
   }
 
