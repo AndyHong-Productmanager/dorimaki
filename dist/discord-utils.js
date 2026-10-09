@@ -1,0 +1,789 @@
+// Discord-specific utility functions.
+// Handles markdown splitting for Discord's 2000-char limit, code block escaping,
+// thread message sending, and channel metadata extraction from topic tags.
+// Use namespace import for CJS interop — discord.js is CJS and its named
+// exports aren't detectable by all ESM loaders (e.g. tsx/esbuild) because
+// discord.js uses tslib's __exportStar which is opaque to static analysis.
+import * as discord from 'discord.js';
+const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord;
+import { discordApiUrl } from './discord-urls.js';
+import { Lexer } from 'marked';
+import { splitTablesFromMarkdown } from './format-tables.js';
+import { sessionPartContent, shouldLeadWithBlankLine, } from './message-formatting.js';
+import { getChannelDirectory, getThreadIdBySessionId, getThreadWorktreeOrWorkspace } from './database.js';
+import { DiscordOperationError } from './errors.js';
+import YAML from 'yaml';
+import { limitHeadingDepth } from './limit-heading-depth.js';
+import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js';
+import { createLogger, LogPrefix } from './logger.js';
+import { store } from './store.js';
+import mime from 'mime';
+import fs from 'node:fs';
+import path from 'node:path';
+const discordLogger = createLogger(LogPrefix.DISCORD);
+/** Starter embed with the YAML marker. Links the parent thread when the parent session is known locally. */
+export async function buildThreadStartEmbeds(marker) {
+    const parentThreadId = marker.parentSessionId
+        ? await getThreadIdBySessionId(marker.parentSessionId)
+        : undefined;
+    return [
+        {
+            color: 0x2b2d31,
+            ...(parentThreadId && { description: `Parent thread: <#${parentThreadId}>` }),
+            footer: { text: YAML.stringify(marker) },
+        },
+    ];
+}
+/**
+ * Centralized permission check for Dorimaki bot access.
+ * Returns true if the member has permission to use the bot:
+ * - Server owner, Administrator, Manage Server, or "Dorimaki" role (case-insensitive).
+ * Returns false if member is null or has the "no-dorimaki" role (overrides all).
+ */
+export function hasDorimakiBotPermission(member, guild) {
+    if (!member) {
+        return false;
+    }
+    const hasNoDorimakiRole = hasRoleByName(member, 'no-dorimaki', guild);
+    if (hasNoDorimakiRole) {
+        return false;
+    }
+    if (store.getState().allowAllUsers) {
+        return true;
+    }
+    const memberPermissions = member instanceof GuildMember
+        ? member.permissions
+        : new PermissionsBitField(BigInt(member.permissions));
+    const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId;
+    const memberId = member instanceof GuildMember ? member.id : member.user.id;
+    const isOwner = ownerId ? memberId === ownerId : false;
+    const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator);
+    const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild);
+    const hasDorimakiRole = hasRoleByName(member, 'dorimaki', guild);
+    return isOwner || isAdmin || canManageServer || hasDorimakiRole;
+}
+/**
+ * Stricter permission check that ignores allowAllUsers.
+ * Use for admin-only commands like /login and /transcription-key that
+ * configure shared credentials. Always requires owner, admin, manage
+ * server, or Dorimaki role regardless of --allow-all-users flag.
+ */
+export function hasDorimakiAdminPermission(member, guild) {
+    if (!member) {
+        return false;
+    }
+    const hasNoDorimaki = hasRoleByName(member, 'no-dorimaki', guild);
+    if (hasNoDorimaki) {
+        return false;
+    }
+    const memberPermissions = member instanceof GuildMember
+        ? member.permissions
+        : new PermissionsBitField(BigInt(member.permissions));
+    const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId;
+    const memberId = member instanceof GuildMember ? member.id : member.user.id;
+    const isOwner = ownerId ? memberId === ownerId : false;
+    const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator);
+    const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild);
+    const hasDorimakiRole = hasRoleByName(member, 'dorimaki', guild);
+    return isOwner || isAdmin || canManageServer || hasDorimakiRole;
+}
+export async function resolveGuildMessageMember(message) {
+    if (!message.guild)
+        return null;
+    if (message.member)
+        return message.member;
+    const fetchedMember = await message.guild.members
+        .fetch(message.author.id)
+        .catch((e) => new Error('Failed to fetch guild member', { cause: e }));
+    if (fetchedMember instanceof Error) {
+        discordLogger.warn(`[PERMISSION] Denying message ${message.id}: ${fetchedMember.message}`);
+        return null;
+    }
+    return fetchedMember;
+}
+function hasRoleByName(member, roleName, guild) {
+    const target = roleName.toLowerCase();
+    if (member instanceof GuildMember) {
+        return member.roles.cache.some((role) => role.name.toLowerCase() === target);
+    }
+    if (!guild) {
+        return false;
+    }
+    const roleIds = Array.isArray(member.roles) ? member.roles : [];
+    for (const roleId of roleIds) {
+        const role = guild.roles.cache.get(roleId);
+        if (role?.name.toLowerCase() === target) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
+ * Check if the member has the "no-dorimaki" role that blocks bot access.
+ * Separate from hasDorimakiBotPermission so callers can show a specific error message.
+ */
+export function hasNoDorimakiRole(member) {
+    if (!member?.roles?.cache) {
+        return false;
+    }
+    return member.roles.cache.some((role) => role.name.toLowerCase() === 'no-dorimaki');
+}
+/**
+ * React to a thread's starter message with an emoji.
+ * Thread ID equals the starter message ID in Discord.
+ */
+export async function reactToThread({ rest, threadId, channelId, emoji, }) {
+    const parentChannelId = await (async () => {
+        if (channelId) {
+            return channelId;
+        }
+        // Fetch the thread to get its parent channel ID
+        const threadResult = await rest.get(Routes.channel(threadId)).catch((e) => new DiscordOperationError({ operation: 'fetchThreadStarter', cause: e }));
+        if (threadResult instanceof Error) {
+            discordLogger.warn(`Failed to fetch thread ${threadId}:`, threadResult.message);
+            return null;
+        }
+        return threadResult.parent_id || null;
+    })();
+    if (!parentChannelId) {
+        discordLogger.warn(`Could not resolve parent channel for thread ${threadId}`);
+        return;
+    }
+    // React to the thread starter message in the parent channel.
+    // Thread ID equals the starter message ID for threads created from messages.
+    const result = await rest.put(Routes.channelMessageOwnReaction(parentChannelId, threadId, encodeURIComponent(emoji))).catch((e) => new DiscordOperationError({ operation: 'addReaction', cause: e }));
+    if (result instanceof Error) {
+        discordLogger.warn(`Failed to react to thread ${threadId} with ${emoji}:`, result.message);
+    }
+}
+export async function archiveThread({ rest, threadId, parentChannelId, sessionId, client, archiveDelay = 0, }) {
+    await reactToThread({
+        rest,
+        threadId,
+        channelId: parentChannelId,
+        emoji: '📁',
+    });
+    if (client && sessionId) {
+        const updateResult = await (async () => {
+            const sessionResponse = await client.session.get({
+                sessionID: sessionId,
+            });
+            if (!sessionResponse.data) {
+                return;
+            }
+            const currentTitle = sessionResponse.data.title || '';
+            const newTitle = currentTitle.startsWith('📁')
+                ? currentTitle
+                : `📁 ${currentTitle}`.trim();
+            await client.session.update({
+                sessionID: sessionId,
+                title: newTitle,
+            });
+        })().catch((e) => new Error('Failed to update session title', { cause: e }));
+        if (updateResult instanceof Error) {
+            discordLogger.warn(`[archive-thread] ${updateResult.message}`);
+        }
+    }
+    if (archiveDelay > 0) {
+        await new Promise((resolve) => {
+            setTimeout(() => {
+                resolve();
+            }, archiveDelay);
+        });
+    }
+    await rest.patch(Routes.channel(threadId), {
+        body: { archived: true },
+    });
+}
+export const DISCORD_THREAD_RENAME_TIMEOUT_MS = 3000;
+// Discord rename can hang on the 3rd call (~2 per 10 min). Race so it never blocks.
+export async function raceDiscordRename({ rename, timeoutMs = DISCORD_THREAD_RENAME_TIMEOUT_MS, }) {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    return Promise.race([
+        rename,
+        new Promise((resolve) => {
+            timeoutSignal.addEventListener('abort', () => {
+                resolve('timeout');
+            });
+        }),
+    ]);
+}
+/**
+ * Add a user as a thread member so the thread shows up in their Discord left
+ * sidebar. Discord only lists threads you are a member of, so a scheduled
+ * reminder posted into a thread the user never joined (or already left) can
+ * fire completely unnoticed.
+ *
+ * Do NOT add unarchive logic here. The Discord docs imply archived threads
+ * reject member changes with `50083: Thread is archived`, but that was verified
+ * against the real API and it is wrong for unlocked threads:
+ *   - PUT thread-members on an archived unlocked thread succeeds
+ *   - POST message to an archived unlocked thread succeeds and auto-unarchives
+ * So callers that add the member and then post get an active thread for free.
+ * Locked threads fail either way without MANAGE_THREADS, and unarchiving them
+ * needs that same permission, so a pre-emptive PATCH buys nothing but latency.
+ *
+ * PUT returns 204 both when the user is newly added and when they were already
+ * a member, so calling this repeatedly is safe.
+ */
+export async function ensureThreadMember({ rest, threadId, userId, }) {
+    const addMemberResult = await rest
+        .put(Routes.threadMembers(threadId, userId))
+        .catch((error) => {
+        return new Error(`Failed to add user ${userId} to thread ${threadId}`, {
+            cause: error,
+        });
+    });
+    if (addMemberResult instanceof Error)
+        return addMemberResult;
+}
+export function resolveFooterMentionUserId({ sessionUserId, botUserId, threadOwnerId, members, }) {
+    if (sessionUserId && sessionUserId !== botUserId)
+        return sessionUserId;
+    if (!botUserId || threadOwnerId !== botUserId)
+        return undefined;
+    const humans = members
+        .filter((member) => member.id && member.id !== botUserId && member.bot === false)
+        .sort((a, b) => {
+        const aJoined = a.joinedTimestamp ?? Number.POSITIVE_INFINITY;
+        const bJoined = b.joinedTimestamp ?? Number.POSITIVE_INFINITY;
+        if (aJoined !== bJoined)
+            return aJoined - bJoined;
+        return a.id.localeCompare(b.id);
+    });
+    return humans[0]?.id;
+}
+function footerMentionMembersFromCache(thread) {
+    return [...thread.members.cache.values()].map((member) => ({
+        id: member.id,
+        bot: member.user?.bot,
+        joinedTimestamp: member.joinedTimestamp ?? null,
+    }));
+}
+export async function resolveThreadFooterMentionUserId({ sessionUserId, thread, }) {
+    const botUserId = thread.client.user?.id;
+    if (sessionUserId && sessionUserId !== botUserId)
+        return sessionUserId;
+    if (!botUserId || thread.ownerId !== botUserId)
+        return undefined;
+    const cached = footerMentionMembersFromCache(thread);
+    if (cached.some((member) => member.bot === false && member.id !== botUserId)) {
+        return resolveFooterMentionUserId({
+            sessionUserId,
+            botUserId,
+            threadOwnerId: thread.ownerId ?? undefined,
+            members: cached,
+        });
+    }
+    const fetched = await thread.members.fetch().catch((e) => {
+        return new DiscordOperationError({ operation: 'fetchThreadMembers', cause: e });
+    });
+    if (fetched instanceof Error) {
+        discordLogger.warn(`[FOOTER] Failed to fetch thread members: ${fetched.message}`);
+        return resolveFooterMentionUserId({
+            sessionUserId,
+            botUserId,
+            threadOwnerId: thread.ownerId ?? undefined,
+            members: cached,
+        });
+    }
+    const members = [...fetched.values()].map((member) => ({
+        id: member.id,
+        bot: member.user?.bot,
+        joinedTimestamp: member.joinedTimestamp ?? null,
+    }));
+    return resolveFooterMentionUserId({
+        sessionUserId,
+        botUserId,
+        threadOwnerId: thread.ownerId ?? undefined,
+        members,
+    });
+}
+/** Remove Discord mentions from text so they don't appear in thread titles */
+export function stripMentions(text) {
+    return text
+        .replace(/<@!?\d+>/g, '') // user mentions
+        .replace(/<@&\d+>/g, '') // role mentions
+        .replace(/<#\d+>/g, '') // channel mentions
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+export const SILENT_MESSAGE_FLAGS = 4 | 4096;
+// Same as SILENT but without SuppressNotifications - triggers badge/notification
+export const NOTIFY_MESSAGE_FLAGS = 4;
+export function escapeBackticksInCodeBlocks(markdown) {
+    const lexer = new Lexer();
+    const tokens = lexer.lex(markdown);
+    let result = '';
+    for (const token of tokens) {
+        if (token.type === 'code') {
+            const escapedCode = token.text.replace(/`/g, '\\`');
+            result += '```' + (token.lang || '') + '\n' + escapedCode + '\n```\n';
+        }
+        else {
+            result += token.raw;
+        }
+    }
+    return result;
+}
+export function splitMarkdownForDiscord({ content, maxLength, }) {
+    if (content.length <= maxLength) {
+        return [content];
+    }
+    const lexer = new Lexer();
+    const tokens = lexer.lex(content);
+    const lines = [];
+    const ensureNewlineBeforeCode = () => {
+        const last = lines[lines.length - 1];
+        if (!last) {
+            return;
+        }
+        if (last.text.endsWith('\n')) {
+            return;
+        }
+        lines.push({
+            text: '\n',
+            inCodeBlock: false,
+            lang: '',
+            isOpeningFence: false,
+            isClosingFence: false,
+        });
+    };
+    for (const token of tokens) {
+        if (token.type === 'code') {
+            ensureNewlineBeforeCode();
+            const lang = token.lang || '';
+            lines.push({
+                text: '```' + lang + '\n',
+                inCodeBlock: false,
+                lang,
+                isOpeningFence: true,
+                isClosingFence: false,
+            });
+            const codeLines = token.text.split('\n');
+            for (const codeLine of codeLines) {
+                lines.push({
+                    text: codeLine + '\n',
+                    inCodeBlock: true,
+                    lang,
+                    isOpeningFence: false,
+                    isClosingFence: false,
+                });
+            }
+            lines.push({
+                text: '```\n',
+                inCodeBlock: false,
+                lang: '',
+                isOpeningFence: false,
+                isClosingFence: true,
+            });
+        }
+        else {
+            const rawLines = token.raw.split('\n');
+            for (let i = 0; i < rawLines.length; i++) {
+                const isLast = i === rawLines.length - 1;
+                const text = isLast ? rawLines[i] : rawLines[i] + '\n';
+                if (text) {
+                    lines.push({
+                        text,
+                        inCodeBlock: false,
+                        lang: '',
+                        isOpeningFence: false,
+                        isClosingFence: false,
+                    });
+                }
+            }
+        }
+    }
+    const chunks = [];
+    let currentChunk = '';
+    let currentLang = null;
+    // helper to split a long line into smaller pieces at word boundaries or hard breaks
+    const splitLongLine = (text, available, inCode) => {
+        const pieces = [];
+        let remaining = text;
+        while (remaining.length > available) {
+            let splitAt = available;
+            // for non-code, try to split at word boundary
+            if (!inCode) {
+                const lastSpace = remaining.lastIndexOf(' ', available);
+                if (lastSpace > available * 0.5) {
+                    splitAt = lastSpace + 1;
+                }
+            }
+            pieces.push(remaining.slice(0, splitAt));
+            remaining = remaining.slice(splitAt);
+        }
+        if (remaining) {
+            pieces.push(remaining);
+        }
+        return pieces;
+    };
+    const closingFence = '```\n';
+    for (const line of lines) {
+        // openingFenceSize accounts for the fence text when starting a fresh chunk
+        const openingFenceSize = currentChunk.length === 0 && (line.inCodeBlock || line.isOpeningFence)
+            ? ('```' + line.lang + '\n').length
+            : 0;
+        // When opening fence starts a fresh chunk, its size is in openingFenceSize.
+        // Otherwise count it normally so the overflow check doesn't miss the fence text.
+        const lineLength = line.isOpeningFence && currentChunk.length === 0 ? 0 : line.text.length;
+        const activeFenceOverhead = currentLang !== null || openingFenceSize > 0 ? closingFence.length : 0;
+        const wouldExceed = currentChunk.length +
+            openingFenceSize +
+            lineLength +
+            activeFenceOverhead >
+            maxLength;
+        if (wouldExceed) {
+            // handle case where single line is longer than maxLength
+            if (line.text.length > maxLength) {
+                // first, flush current chunk if any
+                if (currentChunk) {
+                    if (currentLang !== null) {
+                        currentChunk += '```\n';
+                    }
+                    chunks.push(currentChunk);
+                    currentChunk = '';
+                }
+                // calculate overhead for code block markers
+                const codeBlockOverhead = line.inCodeBlock
+                    ? ('```' + line.lang + '\n').length + '```\n'.length
+                    : 0;
+                // ensure at least 10 chars available, even if maxLength is very small
+                const availablePerChunk = Math.max(10, maxLength - codeBlockOverhead - 50);
+                const pieces = splitLongLine(line.text, availablePerChunk, line.inCodeBlock);
+                for (let i = 0; i < pieces.length; i++) {
+                    const piece = pieces[i];
+                    if (line.inCodeBlock) {
+                        chunks.push('```' + line.lang + '\n' + piece + '```\n');
+                    }
+                    else {
+                        chunks.push(piece);
+                    }
+                }
+                currentLang = null;
+                continue;
+            }
+            // normal case: line fits in a chunk but current chunk would overflow
+            if (currentChunk) {
+                if (currentLang !== null) {
+                    currentChunk += '```\n';
+                }
+                chunks.push(currentChunk);
+                if (line.isClosingFence && currentLang !== null) {
+                    currentChunk = '';
+                    currentLang = null;
+                    continue;
+                }
+                if (line.inCodeBlock || line.isOpeningFence) {
+                    const lang = line.lang;
+                    currentChunk = '```' + lang + '\n';
+                    if (!line.isOpeningFence) {
+                        currentChunk += line.text;
+                    }
+                    currentLang = lang;
+                }
+                else {
+                    currentChunk = line.text;
+                    currentLang = null;
+                }
+            }
+            else {
+                // currentChunk is empty but line still exceeds - shouldn't happen after above check
+                const openingFence = line.inCodeBlock || line.isOpeningFence;
+                const openingFenceSize = openingFence
+                    ? ('```' + line.lang + '\n').length
+                    : 0;
+                if (line.text.length + openingFenceSize + activeFenceOverhead >
+                    maxLength) {
+                    const fencedOverhead = openingFence
+                        ? ('```' + line.lang + '\n').length + closingFence.length
+                        : 0;
+                    const availablePerChunk = Math.max(10, maxLength - fencedOverhead - 50);
+                    const pieces = splitLongLine(line.text, availablePerChunk, line.inCodeBlock);
+                    for (const piece of pieces) {
+                        if (openingFence) {
+                            chunks.push('```' + line.lang + '\n' + piece + closingFence);
+                        }
+                        else {
+                            chunks.push(piece);
+                        }
+                    }
+                    currentChunk = '';
+                    currentLang = null;
+                }
+                else {
+                    if (openingFence) {
+                        currentChunk = '```' + line.lang + '\n';
+                        if (!line.isOpeningFence) {
+                            currentChunk += line.text;
+                        }
+                        currentLang = line.lang;
+                    }
+                    else {
+                        currentChunk = line.text;
+                        currentLang = null;
+                    }
+                }
+            }
+        }
+        else {
+            currentChunk += line.text;
+            if (line.inCodeBlock || line.isOpeningFence) {
+                currentLang = line.lang;
+            }
+            else if (line.isClosingFence) {
+                currentLang = null;
+            }
+        }
+    }
+    if (currentChunk) {
+        if (currentLang !== null) {
+            currentChunk += closingFence;
+        }
+        chunks.push(currentChunk);
+    }
+    return chunks;
+}
+export async function sendThreadMessage(thread, content, options) {
+    const MAX_LENGTH = 2000;
+    // Split content into text and CV2 component segments (tables → Container components)
+    const segments = splitTablesFromMarkdown(content);
+    const baseFlags = options?.flags ?? SILENT_MESSAGE_FLAGS;
+    let firstMessage;
+    for (const segment of segments) {
+        if (segment.type === 'components') {
+            const message = await thread.send({
+                components: segment.components,
+                flags: MessageFlags.IsComponentsV2 | baseFlags,
+            });
+            if (!firstMessage) {
+                firstMessage = message;
+            }
+            continue;
+        }
+        // Apply text transformations to text segments
+        let text = segment.text;
+        text = unnestCodeBlocksFromLists(text);
+        text = limitHeadingDepth(text);
+        text = escapeBackticksInCodeBlocks(text);
+        if (!text.trim()) {
+            continue;
+        }
+        const sendFlags = options?.flags ?? SILENT_MESSAGE_FLAGS;
+        const chunks = splitMarkdownForDiscord({
+            content: text,
+            maxLength: MAX_LENGTH,
+        });
+        if (chunks.length > 1) {
+            discordLogger.log(`MESSAGE: Splitting ${text.length} chars into ${chunks.length} messages`);
+        }
+        for (let chunk of chunks) {
+            if (!chunk) {
+                continue;
+            }
+            // Safety net: hard-truncate if splitting still produced an oversized chunk
+            if (chunk.length > MAX_LENGTH) {
+                chunk = chunk.slice(0, MAX_LENGTH - 4) + '...';
+            }
+            const message = await thread.send({ content: chunk, flags: sendFlags });
+            if (!firstMessage) {
+                firstMessage = message;
+            }
+        }
+    }
+    return firstMessage;
+}
+export async function sendSessionPartMessage(thread, content, options) {
+    return sendThreadMessage(thread, sessionPartContent({
+        content,
+        leadWithBlankLine: options?.leadWithBlankLine === true,
+    }), { flags: options?.flags });
+}
+export async function sendSessionPartBatches({ thread, batches, }) {
+    const sent = [];
+    let previousKind;
+    for (const batch of batches) {
+        const message = await sendSessionPartMessage(thread, batch.content, {
+            leadWithBlankLine: shouldLeadWithBlankLine({
+                previousKind,
+                nextKind: batch.kind,
+            }),
+        });
+        previousKind = batch.kind;
+        sent.push({ partIds: batch.partIds, message });
+    }
+    return sent;
+}
+export function isThreadChannelType(type) {
+    return [
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread,
+        ChannelType.AnnouncementThread,
+    ].includes(type);
+}
+/** True for guild text channels and for threads inside them. Commands that
+ * only need a guild context should accept both so they also work from threads. */
+export function isTextChannelOrThread(type) {
+    return type === ChannelType.GuildText || isThreadChannelType(type);
+}
+export async function resolveTextChannel(channel) {
+    if (!channel) {
+        return null;
+    }
+    if (channel.type === ChannelType.GuildText) {
+        return channel;
+    }
+    if (channel.type === ChannelType.PublicThread ||
+        channel.type === ChannelType.PrivateThread ||
+        channel.type === ChannelType.AnnouncementThread) {
+        const parentId = channel.parentId;
+        if (parentId) {
+            const parent = await channel.guild.channels.fetch(parentId);
+            if (parent?.type === ChannelType.GuildText) {
+                return parent;
+            }
+        }
+    }
+    return null;
+}
+export function escapeDiscordFormatting(text) {
+    return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`');
+}
+export async function getDorimakiMetadata(textChannel) {
+    if (!textChannel) {
+        return {};
+    }
+    const channelConfig = await getChannelDirectory(textChannel.id);
+    if (!channelConfig) {
+        return {};
+    }
+    return {
+        projectDirectory: channelConfig.directory,
+    };
+}
+/**
+ * Resolve project directory from an autocomplete interaction.
+ * Uses interaction.channelId (always available from raw payload) instead of
+ * interaction.channel (cache-based getter, often null with gateway-proxy).
+ * Checks the channel ID directly in DB, then tries thread worktree lookup,
+ * then falls back to fetching the channel to resolve thread parent.
+ */
+export async function resolveProjectDirectoryFromAutocomplete(interaction) {
+    const channelId = interaction.channelId;
+    // Direct channel lookup — works when the command is run from a project text channel
+    const channelConfig = await getChannelDirectory(channelId);
+    if (channelConfig) {
+        return channelConfig.directory;
+    }
+    // If we're in a thread, try worktree/workspace info first (has project_directory)
+    const workspace = await getThreadWorktreeOrWorkspace(channelId);
+    if (workspace?.project_directory) {
+        return workspace.project_directory;
+    }
+    // Thread fallback: resolve parent channel ID and look up its directory.
+    // Try cached channel first, then fetch if cache misses (gateway-proxy scenario).
+    const cachedParentId = interaction.channel?.isThread() ? interaction.channel.parentId : null;
+    if (cachedParentId) {
+        const parentConfig = await getChannelDirectory(cachedParentId);
+        if (parentConfig) {
+            return parentConfig.directory;
+        }
+    }
+    // Last resort: fetch the channel from Discord API to get parentId for threads
+    // when the channel isn't cached at all (common with gateway-proxy).
+    if (!cachedParentId) {
+        const fetched = await interaction.client.channels.fetch(channelId)
+            .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }));
+        if (!(fetched instanceof Error) && fetched?.isThread() && fetched.parentId) {
+            const parentConfig = await getChannelDirectory(fetched.parentId);
+            if (parentConfig) {
+                return parentConfig.directory;
+            }
+        }
+    }
+    return undefined;
+}
+/**
+ * Resolve the working directory for a channel or thread.
+ * Returns both the base project directory (for server init) and the working directory
+ * (worktree directory if in a worktree thread, otherwise same as projectDirectory).
+ * This prevents commands from accidentally running in the base project dir when a
+ * worktree is active — the bug that caused /diff, /compact, etc. to use wrong cwd.
+ */
+export async function resolveWorkingDirectory({ channel, }) {
+    const isThread = [
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread,
+        ChannelType.AnnouncementThread,
+    ].includes(channel.type);
+    const textChannel = isThread
+        ? await resolveTextChannel(channel)
+        : channel;
+    const metadata = await getDorimakiMetadata(textChannel);
+    if (!metadata.projectDirectory) {
+        return undefined;
+    }
+    let workingDirectory = metadata.projectDirectory;
+    if (isThread) {
+        // Check thread_workspaces first (new path), then thread_worktrees (legacy)
+        const info = await getThreadWorktreeOrWorkspace(channel.id);
+        if (info?.status === 'ready' && info.workspace_directory) {
+            workingDirectory = info.workspace_directory;
+        }
+    }
+    return {
+        projectDirectory: metadata.projectDirectory,
+        workingDirectory,
+    };
+}
+// Discord upload size limits per server boost tier (bytes).
+// Bots default to 25 MB; boosted servers raise the ceiling.
+export const DISCORD_DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
+/**
+ * Upload files to a Discord thread/channel in a single message.
+ * Sending all files in one message causes Discord to display images in a grid layout.
+ *
+ * Files are validated against the Discord upload size limit before reading them
+ * into memory. Pass `maxFileSize` if you know the guild's boost tier limit;
+ * otherwise the conservative 25 MB bot default is used.
+ */
+export async function uploadFilesToDiscord({ threadId, botToken, files, maxFileSize = DISCORD_DEFAULT_MAX_FILE_SIZE, }) {
+    if (files.length === 0) {
+        return;
+    }
+    // Fail fast: check file sizes before reading anything into memory
+    const sizeLimit = maxFileSize ?? DISCORD_DEFAULT_MAX_FILE_SIZE;
+    for (const file of files) {
+        const stat = fs.statSync(file);
+        if (stat.size > sizeLimit) {
+            const fileMB = (stat.size / 1024 / 1024).toFixed(1);
+            const limitMB = (sizeLimit / 1024 / 1024).toFixed(0);
+            throw new Error(`File "${path.basename(file)}" is ${fileMB} MB, which exceeds Discord's ${limitMB} MB upload limit`);
+        }
+    }
+    // Build attachments array for all files
+    const attachments = files.map((file, index) => ({
+        id: index,
+        filename: path.basename(file),
+    }));
+    const formData = new FormData();
+    formData.append('payload_json', JSON.stringify({ attachments }));
+    // Append each file with its array index, with correct MIME type for grid display
+    files.forEach((file, index) => {
+        const buffer = fs.readFileSync(file);
+        const mimeType = mime.getType(file) || 'application/octet-stream';
+        formData.append(`files[${index}]`, new Blob([buffer], { type: mimeType }), path.basename(file));
+    });
+    const response = await fetch(discordApiUrl(`/channels/${threadId}/messages`), {
+        method: 'POST',
+        headers: {
+            Authorization: `Bot ${botToken}`,
+        },
+        body: formData,
+    });
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Discord API error: ${response.status} - ${error}`);
+    }
+}

@@ -1,0 +1,56 @@
+// Free Whisper transcription fallback via the DORIMAKIDOTDEV Cloudflare Worker.
+// Only usable in gateway mode: the worker authenticates the request against
+// the shared gateway_clients Postgres table using the CLI's own
+// clientId:clientSecret pair (the same credentials already used for
+// gateway-proxy REST/WebSocket calls), then runs
+// @cf/openai/whisper-large-v3-turbo on Cloudflare's own Workers AI account.
+// This means transcription costs Dorimaki, never the user, so voice messages
+// work out of the box for gateway-mode installs with no OpenAI/Gemini key
+// configured.
+//
+// See website/src/server.tsx POST /api/transcribe for the server side.
+// Rate limits (per-client burst + daily request cap) are enforced there,
+// not here — a 429 from the worker just means this fallback is unavailable
+// right now and the caller should fall back to the "add API key" dialog.
+import { TranscriptionError } from './errors.js';
+import { createLogger, LogPrefix } from './logger.js';
+const voiceLogger = createLogger(LogPrefix.VOICE);
+const DORIMAKI_TRANSCRIBE_URL = process.env.DORIMAKI_TRANSCRIBE_URL || 'https://DORIMAKIDOTDEV/api/transcribe';
+export async function transcribeViaDorimakiGateway({ audio, mediaType, clientId, clientSecret, }) {
+    const response = await fetch(DORIMAKI_TRANSCRIBE_URL, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${clientId}:${clientSecret}`,
+            'Content-Type': mediaType || 'audio/ogg',
+        },
+        body: audio,
+    }).catch((cause) => {
+        return new TranscriptionError({
+            reason: 'Failed to reach DORIMAKIDOTDEV transcription endpoint',
+            cause,
+        });
+    });
+    if (response instanceof TranscriptionError)
+        return response;
+    if (!response.ok) {
+        const bodyText = await response.text().catch(() => '');
+        voiceLogger.log(`Dorimaki gateway transcription failed: ${response.status} ${bodyText}`);
+        return new TranscriptionError({
+            reason: `DORIMAKIDOTDEV returned ${response.status}${bodyText ? `: ${bodyText}` : ''}`,
+        });
+    }
+    const data = (await response.json().catch((cause) => {
+        return new TranscriptionError({
+            reason: 'Failed to parse transcription response',
+            cause,
+        });
+    }));
+    if (data instanceof TranscriptionError)
+        return data;
+    if (!data.text) {
+        return new TranscriptionError({
+            reason: 'Empty transcription response from dorimaki gateway',
+        });
+    }
+    return data.text;
+}

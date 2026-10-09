@@ -1,0 +1,1217 @@
+// OpenCode single-server process manager.
+//
+// Architecture: ONE opencode serve process shared by all project directories.
+// Each SDK client uses the x-opencode-directory header to scope requests to a
+// specific project. The server lazily creates and caches an Instance per unique
+// directory path internally.
+//
+// Permission layering — READ THIS BEFORE ADDING A PERMISSION RULE.
+//
+// opencode evaluates permissions with findLast() over a flattened list, so the
+// last matching rule wins. The order is:
+//
+//   opencode built-in defaults
+//     ▼
+//   merged config files  ── dorimaki's generated config, THEN the user's
+//     ▼                     project opencode.json (deep-merged on top)
+//   config.agent.<name>.permission
+//     ▼
+//   session.permission   ── buildSessionPermissions(), always wins
+//
+// Directory ALLOW rules therefore belong in the generated server config, never
+// in session rules or an agent block: a project opencode.json must still be
+// able to `deny` or `ask` for specific folders. Anything placed in
+// session.permission silently overrides the user.
+//
+// external_directory is `{ '*': 'allow' }` by default. opencode's own default
+// is `ask`, which meant the agent had to interrupt the user for ordinary reads
+// outside the project, and an unanswered prompt was auto-rejected on TTL. Users
+// who want stricter behaviour add `deny`/`ask` rules to their own
+// opencode.json, or start dorimaki with --restrict-directories.
+//
+// session.permission carries exactly one thing: the worktree original-checkout
+// deny, which must beat user config on purpose.
+//
+// Uses errore for type-safe error handling.
+import { spawn, execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import readline from 'node:readline';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { createOpencodeClient, } from '@opencode-ai/sdk/v2';
+import { restartGlobalEventListener, waitForGlobalEventListener, } from './session-handler/global-event-listener.js';
+import { getDataDir, getLockPort, getRestrictExternalDirectories, getOpencodeHostname, getOpencodePort, } from './config.js';
+import { store } from './store.js';
+import { getHranaUrl } from './hrana-server.js';
+export function resolveSubrouterPluginSpec({ isDev }) {
+    const require = createRequire(import.meta.url);
+    const entry = require.resolve('@subrouter/opencode');
+    if (isDev)
+        return pathToFileURL(entry).href;
+    const packageJsonPath = require.resolve('@subrouter/opencode/package.json');
+    const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version;
+    if (typeof version !== 'string' || !version) {
+        throw new Error(`Missing @subrouter/opencode version in ${packageJsonPath}`);
+    }
+    return `@subrouter/opencode@${version}`;
+}
+import * as errore from 'errore';
+import { createLogger, LogPrefix } from './logger.js';
+import { notifyError } from './sentry.js';
+import { DirectoryNotAccessibleError, ServerStartError, ServerNotReadyError, FetchError, } from './errors.js';
+import { ensureDorimakiCommandShim, getIncompatibleOpencodeVersionError, getPathEnvKey, getSpawnCommandAndArgs, prependPathEntry, selectResolvedCommand, } from './opencode-command.js';
+import { execAsync } from './exec-async.js';
+import { computeSkillPermission } from './skill-filter.js';
+const opencodeLogger = createLogger(LogPrefix.OPENCODE);
+/**
+ * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
+ * Returns empty object when no password is set.
+ */
+export function getOpencodeServerAuthHeaders() {
+    const serverPassword = process.env.OPENCODE_SERVER_PASSWORD;
+    if (!serverPassword)
+        return {};
+    const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode';
+    const encoded = Buffer.from(`${username}:${serverPassword}`).toString('base64');
+    return { Authorization: `Basic ${encoded}` };
+}
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1']);
+export function publicOpencodeBindRequiresPassword({ hostname, }) {
+    if (!hostname)
+        return false;
+    return !LOOPBACK_HOSTNAMES.has(hostname);
+}
+// Always pass --hostname so opencode.json server.hostname / mdns cannot bind 0.0.0.0.
+const DEFAULT_OPENCODE_HOSTNAME = '127.0.0.1';
+export function buildOpencodeServeArgs({ port, hostname, }) {
+    return [
+        'serve',
+        '--port',
+        port.toString(),
+        '--hostname',
+        hostname || DEFAULT_OPENCODE_HOSTNAME,
+        '--print-logs',
+        '--log-level',
+        'WARN',
+    ];
+}
+// Tracks directories that have been initialized, to avoid repeated log spam
+// from the external sync polling loop.
+const initializedDirectories = new Set();
+const STARTUP_STDERR_TAIL_LIMIT = 30;
+const STARTUP_STDERR_LINE_MAX_LENGTH = 120;
+const STARTUP_ERROR_REASON_MAX_LENGTH = 1500;
+const ANSI_ESCAPE_REGEX = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+export async function requestHealthcheck({ url, timeoutMs = 2000, }) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeout = null;
+        const settle = (handler) => {
+            if (settled)
+                return;
+            settled = true;
+            if (timeout)
+                clearTimeout(timeout);
+            handler();
+        };
+        const req = http.request(url, {
+            method: 'GET',
+            headers: {
+                connection: 'close',
+                ...getOpencodeServerAuthHeaders(),
+            },
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (chunk) => {
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            });
+            res.on('end', () => {
+                settle(() => {
+                    resolve({
+                        status: res.statusCode || 0,
+                        body: Buffer.concat(chunks).toString('utf-8'),
+                    });
+                });
+            });
+            res.on('error', (error) => {
+                settle(() => reject(error));
+            });
+        });
+        req.on('error', (error) => {
+            settle(() => reject(error));
+        });
+        timeout = setTimeout(() => {
+            settle(() => {
+                req.destroy();
+                reject(new Error(`Health check request timed out after ${timeoutMs}ms`));
+            });
+        }, timeoutMs);
+        req.end();
+    });
+}
+function truncateWithEllipsis({ value, maxLength, }) {
+    if (maxLength <= 3) {
+        return value.slice(0, maxLength);
+    }
+    if (value.length <= maxLength) {
+        return value;
+    }
+    return `${value.slice(0, maxLength - 3)}...`;
+}
+function stripAnsiCodes(value) {
+    return value.replaceAll(ANSI_ESCAPE_REGEX, '');
+}
+function sanitizeOutputLine(line) {
+    return stripAnsiCodes(line).trim();
+}
+function sanitizeForCodeFence(line) {
+    return line.replaceAll('```', '`\u200b``');
+}
+function pushStartupStderrTail({ stderrTail, line, }) {
+    const sanitizedLine = sanitizeOutputLine(line);
+    if (sanitizedLine.length === 0) {
+        return;
+    }
+    const truncatedLine = truncateWithEllipsis({
+        value: sanitizeForCodeFence(sanitizedLine),
+        maxLength: STARTUP_STDERR_LINE_MAX_LENGTH,
+    });
+    stderrTail.push(truncatedLine);
+    if (stderrTail.length > STARTUP_STDERR_TAIL_LIMIT) {
+        stderrTail.splice(0, stderrTail.length - STARTUP_STDERR_TAIL_LIMIT);
+    }
+}
+function subscribeToProcessLogStream({ stream, onLine, }) {
+    if (!stream) {
+        return null;
+    }
+    const logReader = readline.createInterface({
+        input: stream,
+        crlfDelay: Infinity,
+    });
+    logReader.on('line', (line) => {
+        const sanitizedLine = sanitizeOutputLine(line);
+        if (sanitizedLine.length === 0) {
+            return;
+        }
+        onLine(sanitizedLine);
+    });
+    return logReader;
+}
+function buildStartupTimeoutReason({ maxAttempts, stderrTail, }) {
+    const timeoutSeconds = Math.round((maxAttempts * 100) / 1000);
+    const baseReason = `Server did not start after ${timeoutSeconds} seconds`;
+    if (stderrTail.length === 0) {
+        return baseReason;
+    }
+    const formatReason = ({ lines, omitted, }) => {
+        const omittedLine = omitted > 0
+            ? `[... ${omitted} older stderr lines omitted to fit Discord ...]\n`
+            : '';
+        const stderrCodeBlock = `${omittedLine}${lines.join('\n')}`;
+        return `${baseReason}\nLast opencode stderr lines:\n\`\`\`text\n${stderrCodeBlock}\n\`\`\``;
+    };
+    let lines = [...stderrTail];
+    let omitted = 0;
+    let formattedReason = formatReason({ lines, omitted });
+    while (formattedReason.length > STARTUP_ERROR_REASON_MAX_LENGTH &&
+        lines.length > 0) {
+        lines = lines.slice(1);
+        omitted += 1;
+        formattedReason = formatReason({ lines, omitted });
+    }
+    return truncateWithEllipsis({
+        value: formattedReason,
+        maxLength: STARTUP_ERROR_REASON_MAX_LENGTH,
+    });
+}
+let singleServer = null;
+let serverRetryCount = 0;
+const serverLifecycleListeners = new Set();
+let processCleanupHandlersRegistered = false;
+let startingServerProcess = null;
+const clientCache = new Map();
+function notifyServerLifecycle(event) {
+    for (const listener of serverLifecycleListeners) {
+        listener(event);
+    }
+}
+export function subscribeOpencodeServerLifecycle(listener) {
+    serverLifecycleListeners.add(listener);
+    return () => {
+        serverLifecycleListeners.delete(listener);
+    };
+}
+function killSingleServerProcessNow({ reason, }) {
+    if (!singleServer) {
+        return;
+    }
+    // Never kill a server we didn't spawn (discovered from another process)
+    if (singleServer.discovered || !singleServer.process) {
+        return;
+    }
+    const serverProcess = singleServer.process;
+    const pid = serverProcess.pid;
+    if (!pid || serverProcess.killed) {
+        return;
+    }
+    const killResult = errore.try(() => {
+        serverProcess.kill('SIGTERM');
+    }, (error) => {
+        return new Error('Failed to send SIGTERM to opencode server', {
+            cause: error,
+        });
+    });
+    if (killResult instanceof Error) {
+        opencodeLogger.warn(`[cleanup:${reason}] ${killResult.message} (pid: ${pid}, port: ${singleServer.port})`);
+        return;
+    }
+    opencodeLogger.log(`[cleanup:${reason}] Sent SIGTERM to opencode server (pid: ${pid}, port: ${singleServer.port})`);
+}
+function killStartingServerProcessNow({ reason, }) {
+    const serverProcess = startingServerProcess;
+    if (!serverProcess) {
+        return;
+    }
+    const pid = serverProcess.pid;
+    if (!pid || serverProcess.killed) {
+        return;
+    }
+    const killResult = errore.try(() => {
+        serverProcess.kill('SIGTERM');
+    }, (error) => {
+        return new Error('Failed to send SIGTERM to starting opencode server', {
+            cause: error,
+        });
+    });
+    if (killResult instanceof Error) {
+        opencodeLogger.warn(`[cleanup:${reason}] ${killResult.message} (pid: ${pid})`);
+        return;
+    }
+    opencodeLogger.log(`[cleanup:${reason}] Sent SIGTERM to starting opencode server (pid: ${pid})`);
+}
+function ensureProcessCleanupHandlersRegistered() {
+    if (processCleanupHandlersRegistered) {
+        return;
+    }
+    processCleanupHandlersRegistered = true;
+    opencodeLogger.log('Registering process cleanup handlers for opencode server');
+    process.on('exit', () => {
+        killSingleServerProcessNow({ reason: 'process-exit' });
+        killStartingServerProcessNow({ reason: 'process-exit' });
+    });
+    // Fallback for CLI subcommands without their own signal handling. Any signal
+    // listener disables Node's default exit, so if we are the only listener we
+    // must exit ourselves. Otherwise the process ignores Ctrl+C and, in the bot,
+    // keeps holding the hrana lock port. If another owner exists (the bot
+    // lifecycle handlers, a subcommand), it decides when to exit.
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+        process.on(signal, () => {
+            killSingleServerProcessNow({ reason: signal.toLowerCase() });
+            killStartingServerProcessNow({ reason: signal.toLowerCase() });
+            if (process.listenerCount(signal) > 1) {
+                return;
+            }
+            process.exit(128 + os.constants.signals[signal]);
+        });
+    }
+}
+// ── Resolve opencode binary ──────────────────────────────────────
+// Resolve the full path to the opencode binary so we can spawn without
+// shell: true. Using shell: true creates an intermediate sh process — when
+// cleanup sends SIGTERM it only kills the shell, leaving the actual opencode
+// process orphaned (reparented to PID 1). Resolving the path upfront lets
+// us spawn the binary directly and SIGTERM reaches the right process.
+//
+// Resolution order:
+// 1. OPENCODE_PATH env var (explicit user override)
+// 2. `which opencode` / `where opencode` (system PATH)
+// 3. Fall back to bare "opencode" (spawn will fail with a clear error)
+//
+// OpenCode must be installed globally before running dorimaki. The bot startup
+// checks for it via ensureCommandAvailable and prompts to install if missing.
+let resolvedOpencodeCommand = null;
+export function resolveOpencodeCommand() {
+    if (resolvedOpencodeCommand) {
+        return resolvedOpencodeCommand;
+    }
+    const envPath = process.env.OPENCODE_PATH;
+    if (envPath) {
+        const resolvedFromEnv = selectResolvedCommand({
+            output: envPath,
+            isWindows: process.platform === 'win32',
+        });
+        if (resolvedFromEnv) {
+            resolvedOpencodeCommand = resolvedFromEnv;
+            return resolvedFromEnv;
+        }
+    }
+    const isWindows = process.platform === 'win32';
+    const whichCmd = isWindows ? 'where' : 'which';
+    const result = errore.try(() => {
+        const commandOutput = execFileSync(whichCmd, ['opencode'], {
+            encoding: 'utf8',
+            timeout: 5000,
+        });
+        const resolved = selectResolvedCommand({
+            output: commandOutput,
+            isWindows,
+        });
+        if (resolved) {
+            return resolved;
+        }
+        throw new Error('opencode not found in PATH');
+    }, () => new Error('opencode not found in PATH'));
+    if (result instanceof Error) {
+        // Fall back to bare command name — spawn will fail with a clear error
+        // if it can't find the binary.
+        opencodeLogger.warn('Could not resolve opencode path via which, falling back to "opencode"');
+        return 'opencode';
+    }
+    resolvedOpencodeCommand = result;
+    opencodeLogger.log(`Resolved opencode binary: ${result}`);
+    return result;
+}
+export async function assertCompatibleOpencodeVersion({ resolvedCommand = resolveOpencodeCommand(), } = {}) {
+    const { command, args } = getSpawnCommandAndArgs({
+        resolvedCommand,
+        baseArgs: ['--version'],
+    });
+    const result = await execAsync({ command, args }, { timeout: 5000, encoding: 'utf8' }).catch((cause) => {
+        return new Error('Failed to read OpenCode version', { cause });
+    });
+    if (result instanceof Error) {
+        opencodeLogger.warn(result.message);
+        return true;
+    }
+    const incompatible = getIncompatibleOpencodeVersionError(`${result.stdout}\n${result.stderr}`);
+    if (incompatible)
+        return incompatible;
+    return true;
+}
+async function getOpenPort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.listen(0, () => {
+            const address = server.address();
+            if (address && typeof address === 'object') {
+                const port = address.port;
+                server.close(() => {
+                    resolve(port);
+                });
+            }
+            else {
+                reject(new Error('Failed to get port'));
+            }
+        });
+        server.on('error', reject);
+    });
+}
+async function waitForServer({ port, directory, maxAttempts = 300, startupStderrTail, }) {
+    const endpoint = new URL(`http://127.0.0.1:${port}/api/health`);
+    if (directory) {
+        endpoint.searchParams.set('directory', directory);
+    }
+    for (let i = 0; i < maxAttempts; i++) {
+        const response = await requestHealthcheck({ url: endpoint.toString() })
+            .catch((e) => new FetchError({ url: endpoint.toString(), cause: e }));
+        if (response instanceof Error) {
+            // Connection refused or other transient errors - continue polling.
+            // Use 100ms interval instead of 1s so we detect readiness faster.
+            // Critical for scale-to-zero cold starts where every ms matters.
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            continue;
+        }
+        if (response.status < 500) {
+            return true;
+        }
+        const body = response.body;
+        // Fatal errors that won't resolve with retrying
+        if (body.includes('BunInstallFailedError')) {
+            return new ServerStartError({ port, reason: body.slice(0, 200) });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return new ServerStartError({
+        port,
+        reason: buildStartupTimeoutReason({
+            maxAttempts,
+            stderrTail: startupStderrTail,
+        }),
+    });
+}
+// ── Single server lifecycle ──────────────────────────────────────
+// The server is started lazily on first initializeOpencodeForDirectory() call.
+// It uses permissive defaults (edit: allow, bash: allow, webfetch: allow, and
+// external_directory: '*' allow unless --restrict-directories is set).
+// In-flight promise to prevent concurrent startups from racing
+let startingServer = null;
+let preferredStartupDirectory = null;
+function ensureOpencodeHomeDirectories({ directories, }) {
+    Object.values(directories).map((directory) => {
+        fs.mkdirSync(directory, { recursive: true });
+    });
+}
+/**
+ * Try to discover an OpenCode server already running in the bot process.
+ * Queries the hrana server on the lock port for the OpenCode server port,
+ * then verifies the server is healthy. Returns null if no server found.
+ */
+async function discoverExistingServer() {
+    const lockPort = getLockPort();
+    try {
+        const portResponse = await requestHealthcheck({
+            url: `http://127.0.0.1:${lockPort}/dorimaki/opencode-port`,
+            timeoutMs: 2000,
+        });
+        if (portResponse.status !== 200) {
+            return null;
+        }
+        const parsed = JSON.parse(portResponse.body);
+        const port = parsed?.port;
+        if (typeof port !== 'number') {
+            return null;
+        }
+        // Verify the OpenCode server is actually healthy
+        const healthResponse = await requestHealthcheck({
+            url: `http://127.0.0.1:${port}/api/health`,
+            timeoutMs: 2000,
+        });
+        if (healthResponse.status >= 500) {
+            return null;
+        }
+        opencodeLogger.log(`Discovered existing OpenCode server on port ${port} via hrana lock port ${lockPort}`);
+        return {
+            process: null,
+            port,
+            baseUrl: `http://127.0.0.1:${port}`,
+            discovered: true,
+        };
+    }
+    catch {
+        // Connection refused or other network error — no bot running
+        return null;
+    }
+}
+async function ensureSingleServer({ directory, } = {}) {
+    const startupDirectory = directory || preferredStartupDirectory || undefined;
+    if (singleServer && !singleServer.process?.killed) {
+        return singleServer;
+    }
+    // Deduplicate concurrent startup attempts (covers both discovery and spawn)
+    if (startingServer) {
+        return startingServer;
+    }
+    // Wrap discovery + spawn in a single shared promise so concurrent callers
+    // don't each run discoverExistingServer() and then each spawn a server.
+    startingServer = (async () => {
+        // Try to discover an already-running server from the bot process via
+        // the hrana server's /dorimaki/opencode-port endpoint. This lets CLI
+        // subcommands (dorimaki session list, archive, wait, etc.) reuse the
+        // bot's OpenCode server instead of spawning a redundant one.
+        const discovered = await discoverExistingServer();
+        if (discovered) {
+            singleServer = discovered;
+            return discovered;
+        }
+        const compatibility = await assertCompatibleOpencodeVersion();
+        if (compatibility instanceof Error)
+            return compatibility;
+        return startSingleServer({ directory: startupDirectory });
+    })();
+    try {
+        return await startingServer;
+    }
+    finally {
+        startingServer = null;
+    }
+}
+async function startSingleServer({ directory, } = {}) {
+    ensureProcessCleanupHandlersRegistered();
+    const configuredPort = getOpencodePort();
+    const port = configuredPort ?? (await getOpenPort());
+    const hostname = getOpencodeHostname() ?? DEFAULT_OPENCODE_HOSTNAME;
+    if (publicOpencodeBindRequiresPassword({ hostname }) &&
+        !process.env.OPENCODE_SERVER_PASSWORD) {
+        return new ServerStartError({
+            port,
+            reason: `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${hostname}`,
+        });
+    }
+    const serveArgs = buildOpencodeServeArgs({ port, hostname });
+    const { command: spawnCommand, args: spawnArgs, windowsVerbatimArguments, } = getSpawnCommandAndArgs({
+        resolvedCommand: resolveOpencodeCommand(),
+        baseArgs: serveArgs,
+    });
+    // Server config uses permissive defaults. By default every external directory
+    // is allowed: opencode's own 'ask' default produced constant permission
+    // prompts for ordinary reads, and users who want protection can add their own
+    // `deny`/`ask` rules in opencode.json (project config is loaded after this
+    // file, so it wins).
+    // With --restrict-directories the old behaviour comes back: only a small set
+    // of known-safe paths is pre-allowed and everything else falls through to the
+    // user's opencode.json default (which is 'ask' unless they changed it).
+    const externalDirectoryPermissions = buildServerExternalDirectoryPermissions();
+    const dorimakiShimDirectory = ensureDorimakiCommandShim({
+        dataDir: getDataDir(),
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        entryScript: process.argv[1] || fileURLToPath(new URL('../bin.js', import.meta.url)),
+    });
+    const pathEnvKey = getPathEnvKey(process.env);
+    const pathEnv = dorimakiShimDirectory instanceof Error
+        ? process.env[pathEnvKey]
+        : prependPathEntry({
+            entry: dorimakiShimDirectory,
+            existingPath: process.env[pathEnvKey],
+        });
+    if (dorimakiShimDirectory instanceof Error) {
+        opencodeLogger.warn(dorimakiShimDirectory.message);
+    }
+    const gatewayToken = store.getState().gatewayToken;
+    const vitestOpencodeEnv = (() => {
+        if (process.env.DORIMAKI_VITEST !== '1') {
+            return {};
+        }
+        const root = path.join(getDataDir(), 'opencode-vitest-home');
+        const directories = {
+            OPENCODE_TEST_HOME: root,
+            OPENCODE_CONFIG_DIR: path.join(root, '.opencode-dorimaki'),
+            XDG_CONFIG_HOME: path.join(root, '.config'),
+            XDG_DATA_HOME: path.join(root, '.local', 'share'),
+            XDG_CACHE_HOME: path.join(root, '.cache'),
+            XDG_STATE_HOME: path.join(root, '.local', 'state'),
+        };
+        // OpenCode writes state/config files into these XDG locations during boot.
+        // In CI, a fresh temp data dir means the parent folders may not exist yet,
+        // and some writes fail closed with NotFound before OpenCode has a chance to
+        // create them lazily. Pre-create the directories so startup-time tests do
+        // not flap based on process scheduling.
+        ensureOpencodeHomeDirectories({ directories });
+        return directories;
+    })();
+    // Write config to a file instead of passing via OPENCODE_CONFIG_CONTENT env var.
+    // OPENCODE_CONFIG (file path) is loaded before project config in opencode's
+    // priority chain, so project-level opencode.json can override dorimaki defaults.
+    // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
+    // causing issue #90 (project permissions not being respected).
+    const isDev = import.meta.url.endsWith('.ts') || import.meta.url.endsWith('.tsx');
+    // Skill whitelist/blacklist from --enable-skill / --disable-skill CLI flags.
+    // Applied as opencode permission.skill rules so every agent inherits the
+    // filter via Permission.merge(defaults, agentRules, user).
+    const skillPermission = computeSkillPermission({
+        enabledSkills: store.getState().enabledSkills,
+        disabledSkills: store.getState().disabledSkills,
+    });
+    const opencodeConfig = {
+        $schema: 'https://opencode.ai/config.json',
+        lsp: false,
+        formatter: false,
+        plugin: [
+            new URL(isDev ? './dorimaki-opencode-plugin.ts' : './dorimaki-opencode-plugin.js', import.meta.url).href,
+            // npm identity lets opencode dedupe a user-installed copy by package
+            // name. Development still loads this workspace's built package directly.
+            resolveSubrouterPluginSpec({ isDev }),
+        ],
+        permission: {
+            edit: 'allow',
+            bash: 'allow',
+            external_directory: externalDirectoryPermissions,
+            webfetch: 'allow',
+            ...(skillPermission && { skill: skillPermission }),
+        },
+        agent: {
+            explore: {
+                permission: {
+                    '*': 'deny',
+                    grep: 'allow',
+                    glob: 'allow',
+                    list: 'allow',
+                    read: {
+                        '*': 'allow',
+                        '*.env': 'deny',
+                        '*.env.*': 'deny',
+                        '*.env.example': 'allow',
+                    },
+                    webfetch: 'allow',
+                    websearch: 'allow',
+                    codesearch: 'allow',
+                    // No external_directory here on purpose. opencode composes agents as
+                    // merge(defaults, agentSpecific, userConfig) and then appends
+                    // config.agent.<name>.permission LAST, so anything set here would beat
+                    // the user's own top-level opencode.json rules. The top-level
+                    // permission block above already covers this agent.
+                },
+            },
+        },
+        // When a permission prompt times out and is auto-rejected, the model sees
+        // the rejection as a tool error and continues working (tries alternatives
+        // or explains it couldn't proceed) instead of the session going dead.
+        experimental: {
+            continue_loop_on_deny: true,
+        },
+        provider: {
+            xai: {
+                models: {
+                    'grok-composer-2.5-fast': {
+                        name: 'Grok Composer 2.5 Fast',
+                        attachment: true,
+                        tool_call: true,
+                        limit: {
+                            context: 256000,
+                            output: 256000,
+                        },
+                        cost: {
+                            input: 0.50,
+                            output: 2.50,
+                            cache_read: 0.20,
+                        },
+                    },
+                },
+            },
+        },
+        skills: {
+            paths: [path.resolve(__dirname, '..', 'skills')],
+        },
+    };
+    const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json');
+    const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2);
+    const existingContent = (() => {
+        try {
+            return fs.readFileSync(opencodeConfigPath, 'utf-8');
+        }
+        catch {
+            return '';
+        }
+    })();
+    if (existingContent !== opencodeConfigJson) {
+        fs.writeFileSync(opencodeConfigPath, opencodeConfigJson);
+    }
+    const serverProcess = spawn(spawnCommand, spawnArgs, {
+        stdio: 'pipe',
+        detached: false,
+        windowsVerbatimArguments,
+        // No project-specific cwd — the server handles all directories via
+        // x-opencode-directory header. Use home dir as a neutral working dir.
+        cwd: os.homedir(),
+        env: {
+            ...process.env,
+            OPENCODE_CONFIG: opencodeConfigPath,
+            OPENCODE_PORT: port.toString(),
+            DORIMAKI: '1',
+            // The browser is not on this machine, so no localhost callback fires.
+            SUBROUTER_MANUAL_OAUTH: '1',
+            OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
+            OPENCODE_ENABLE_EXA: '1',
+            DORIMAKI_DATA_DIR: getDataDir(),
+            DORIMAKI_LOCK_PORT: getLockPort().toString(),
+            DORIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
+            ...(gatewayToken && { DORIMAKI_DB_AUTH_TOKEN: gatewayToken }),
+            // Guard: prevents agents from running `dorimaki` root command inside
+            // an OpenCode session, which would steal the lock port and break the bot.
+            DORIMAKI_OPENCODE_PROCESS: '1',
+            ...(getHranaUrl() && { DORIMAKI_DB_URL: getHranaUrl() }),
+            ...(process.env.DORIMAKI_SENTRY_DSN && {
+                DORIMAKI_SENTRY_DSN: process.env.DORIMAKI_SENTRY_DSN,
+            }),
+            ...vitestOpencodeEnv,
+            ...(pathEnv && { [pathEnvKey]: pathEnv }),
+        },
+    });
+    startingServerProcess = serverProcess;
+    // Buffer logs until we know if server started successfully.
+    const logBuffer = [];
+    const startupStderrTail = [];
+    let serverReady = false;
+    logBuffer.push(`Spawned opencode ${serveArgs.join(' ')} (pid: ${serverProcess.pid})`);
+    const stdoutReader = subscribeToProcessLogStream({
+        stream: serverProcess.stdout,
+        onLine: (line) => {
+            if (!serverReady) {
+                logBuffer.push(`[stdout] ${line}`);
+                return;
+            }
+            opencodeLogger.log(line);
+        },
+    });
+    const stderrReader = subscribeToProcessLogStream({
+        stream: serverProcess.stderr,
+        onLine: (line) => {
+            if (!serverReady) {
+                logBuffer.push(`[stderr] ${line}`);
+                pushStartupStderrTail({ stderrTail: startupStderrTail, line });
+                return;
+            }
+            opencodeLogger.error(line);
+        },
+    });
+    serverProcess.on('error', (error) => {
+        logBuffer.push(`Failed to start server on port ${port}: ${error}`);
+    });
+    serverProcess.on('exit', (code, signal) => {
+        stdoutReader?.close();
+        stderrReader?.close();
+        if (startingServerProcess === serverProcess) {
+            startingServerProcess = null;
+        }
+        opencodeLogger.log(`Opencode server exited with code: ${code}, signal: ${signal}`);
+        singleServer = null;
+        clientCache.clear();
+        notifyServerLifecycle({ type: 'stopped' });
+        // Intentional kills should not trigger auto-restart:
+        // - SIGTERM from our cleanup/restart code
+        // - SIGINT propagated from Ctrl+C (parent process group signal)
+        // - any exit during bot shutdown (shuttingDown flag)
+        // Only unexpected crashes (non-zero exit without signal) get retried.
+        if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
+            serverRetryCount = 0;
+            return;
+        }
+        if (code !== 0) {
+            if (serverRetryCount < 5) {
+                serverRetryCount += 1;
+                opencodeLogger.log(`Restarting server (attempt ${serverRetryCount}/5)`);
+                void ensureSingleServer().then((result) => {
+                    if (result instanceof Error) {
+                        opencodeLogger.error(`Failed to restart opencode server:`, result);
+                        void notifyError(result, `OpenCode server restart failed`);
+                    }
+                });
+            }
+            else {
+                const crashError = new Error(`Server crashed too many times (5), not restarting`);
+                opencodeLogger.error(crashError.message);
+                void notifyError(crashError, `OpenCode server crash loop exhausted`);
+            }
+        }
+        else {
+            serverRetryCount = 0;
+        }
+    });
+    const waitResult = await waitForServer({
+        port,
+        directory,
+        startupStderrTail,
+    });
+    if (waitResult instanceof Error) {
+        killStartingServerProcessNow({ reason: 'startup-failed' });
+        if (startingServerProcess === serverProcess) {
+            startingServerProcess = null;
+        }
+        // Dump buffered logs on failure
+        opencodeLogger.error(`Server failed to start:`);
+        for (const line of logBuffer) {
+            opencodeLogger.error(`  ${line}`);
+        }
+        return waitResult;
+    }
+    serverReady = true;
+    // stopOpencodeServer() may have run while we waited (bot shutdown). Never
+    // publish a server that nobody will stop.
+    if (global.shuttingDown || serverProcess.killed) {
+        killStartingServerProcessNow({ reason: 'stopped-during-startup' });
+        if (startingServerProcess === serverProcess) {
+            startingServerProcess = null;
+        }
+        return new ServerStartError({ port, reason: 'stopped during startup' });
+    }
+    opencodeLogger.log(`Server ready on port ${port}`);
+    // Always dump startup logs so plugin loading errors and other startup output
+    // are visible in dorimaki.log.
+    for (const line of logBuffer) {
+        opencodeLogger.log(line);
+    }
+    const server = {
+        process: serverProcess,
+        port,
+        baseUrl: `http://127.0.0.1:${port}`,
+    };
+    if (startingServerProcess === serverProcess) {
+        startingServerProcess = null;
+    }
+    singleServer = server;
+    notifyServerLifecycle({ type: 'started', port });
+    return server;
+}
+function getOrCreateClient({ baseUrl, directory, }) {
+    const cached = clientCache.get(directory);
+    if (cached) {
+        return cached;
+    }
+    const fetchWithTimeout = (request) => fetch(request, {
+        // @ts-ignore
+        timeout: false,
+    });
+    const client = createOpencodeClient({
+        baseUrl,
+        directory,
+        fetch: fetchWithTimeout,
+        headers: getOpencodeServerAuthHeaders(),
+    });
+    clientCache.set(directory, client);
+    return client;
+}
+// ── Public API ───────────────────────────────────────────────────
+// Same signatures as before so callers don't need to change.
+/**
+ * Initialize OpenCode server for a directory.
+ * Starts the single shared server if not running, then returns a client
+ * factory scoped to the given directory via x-opencode-directory header.
+ *
+ * @param directory - The project directory to scope requests to
+ * @param options.originalRepoDirectory - For worktrees: the original repo directory
+ *   (no longer used for server-level permissions — use buildSessionPermissions
+ *   at session.create() time instead)
+ */
+export async function initializeOpencodeForDirectory(directory, _options) {
+    // Verify directory exists and is accessible
+    const accessCheck = errore.tryFn({
+        try: () => {
+            fs.accessSync(directory, fs.constants.R_OK | fs.constants.X_OK);
+        },
+        catch: () => new DirectoryNotAccessibleError({ directory }),
+    });
+    if (accessCheck instanceof Error)
+        return accessCheck;
+    preferredStartupDirectory = directory;
+    const server = await ensureSingleServer({ directory });
+    if (server instanceof Error)
+        return server;
+    if (!initializedDirectories.has(directory)) {
+        initializedDirectories.add(directory);
+    }
+    return () => {
+        if (!singleServer) {
+            throw new ServerNotReadyError({ directory });
+        }
+        return getOrCreateClient({
+            baseUrl: singleServer.baseUrl,
+            directory,
+        });
+    };
+}
+/**
+ * Known-safe paths that never need an external_directory prompt, used only when
+ * --restrict-directories is active. Without the flag every path is allowed and
+ * this list is irrelevant.
+ */
+function knownSafeExternalDirectories() {
+    const tmpdir = os.tmpdir().replaceAll('\\', '/');
+    const homeDirectory = ({ relativePath }) => {
+        return path.resolve(os.homedir(), relativePath.replaceAll('\\', '/'));
+    };
+    return [
+        '/tmp',
+        '/private/tmp',
+        tmpdir,
+        // The agent can read the global AGENTS.md and opencode config; the path is
+        // visible in the system prompt so models routinely try to open it.
+        homeDirectory({ relativePath: '.config/opencode' }),
+        // The Anthropic plugin rewrites the name in the system prompt, so some
+        // models try this misspelled path instead.
+        homeDirectory({ relativePath: '.config/openc0de' }),
+        // Cached opensrc checkouts.
+        homeDirectory({ relativePath: '.opensrc' }),
+        // Dorimaki data dir (logs, db, etc).
+        homeDirectory({ relativePath: '.dorimaki' }),
+        // Prior opencode tool outputs.
+        homeDirectory({ relativePath: '.local/share/opencode/tool-output' }),
+        // Language toolchain caches, so builds can inspect downloaded modules.
+        homeDirectory({ relativePath: '.cache/zig' }),
+        homeDirectory({ relativePath: '.cargo' }),
+        homeDirectory({ relativePath: '.cache/go-build' }),
+        homeDirectory({ relativePath: 'go/pkg' }),
+    ];
+}
+/**
+ * Build the server-level `permission.external_directory` value.
+ *
+ * Default: `{ '*': 'allow' }` — no prompt for any directory.
+ * With --restrict-directories: an allow-list of known-safe paths only. There is
+ * deliberately no catch-all '*': 'ask' entry so opencode's own 'ask' default
+ * still applies to everything else.
+ *
+ * Always an object, never the plain string 'allow'. opencode deep-merges config
+ * files (remeda mergeDeep) and this file is loaded before the project's
+ * opencode.json, so object keys from the project merge on top of these and win
+ * via findLast(). A plain string would instead be replaced wholesale by the
+ * project object, dropping allow-all for every unmatched path.
+ */
+function buildServerExternalDirectoryPermissions() {
+    if (!getRestrictExternalDirectories()) {
+        return { [ALL_EXTERNAL_DIRECTORIES_PATTERN]: 'allow' };
+    }
+    const permissions = {};
+    for (const directory of knownSafeExternalDirectories()) {
+        permissions[directory] = 'allow';
+        permissions[`${directory}/*`] = 'allow';
+    }
+    return permissions;
+}
+/**
+ * Build the per-session permission ruleset passed to session.create/update.
+ *
+ * Keep this list minimal. Session rules are the LAST ruleset opencode
+ * evaluates — `Permission.merge(agent.permission, session.permission)` in
+ * session/tools.ts, then `findLast()` in permission/index.ts — so every rule
+ * here silently overrides the user's own opencode.json. Only rules that must
+ * beat user config belong here.
+ *
+ * In particular, directory *allow* rules must NOT go here. They live in the
+ * server config so a project opencode.json can still deny or ask for specific
+ * folders. Putting an `external_directory: '*' allow` rule here would make
+ * every user `deny` rule a no-op.
+ *
+ * The session's own working directory never needs a rule either: opencode skips
+ * the external_directory gate entirely for paths inside the active instance
+ * (`containsPath` in tool/external-directory.ts).
+ *
+ * That leaves one rule: worktree isolation. Once a thread moves to a managed
+ * worktree, deny the original checkout so the agent stops editing the main repo.
+ */
+export function buildSessionPermissions({ directory, originalRepoDirectory, }) {
+    // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+    const normalizedDirectory = directory.replaceAll('\\', '/');
+    const originalRepo = originalRepoDirectory?.replaceAll('\\', '/');
+    if (!originalRepo || originalRepo === normalizedDirectory) {
+        return [];
+    }
+    return buildExternalDirectoryPermissionRules({
+        resolvedPattern: originalRepo,
+        action: 'deny',
+    });
+}
+const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*';
+function buildExternalDirectoryPermissionRules({ resolvedPattern, action, }) {
+    if (resolvedPattern === ALL_EXTERNAL_DIRECTORIES_PATTERN) {
+        return [
+            {
+                permission: 'external_directory',
+                pattern: ALL_EXTERNAL_DIRECTORIES_PATTERN,
+                action,
+            },
+        ];
+    }
+    return [
+        {
+            permission: 'external_directory',
+            pattern: resolvedPattern,
+            action,
+        },
+        {
+            permission: 'external_directory',
+            pattern: `${resolvedPattern}/*`,
+            action,
+        },
+    ];
+}
+/**
+ * Parse raw permission strings into PermissionRuleset entries.
+ *
+ * Accepted formats:
+ *   "tool:action"           → { permission: tool, pattern: "*", action }
+ *   "tool:pattern:action"   → { permission: tool, pattern,      action }
+ *
+ * The action must be one of "allow", "deny", "ask" (case-insensitive).
+ * Parts are trimmed to tolerate whitespace from YAML deserialization.
+ * Invalid entries are silently skipped (bad user input shouldn't crash the bot).
+ * If `raw` is not an array, returns empty (defensive against malformed YAML markers).
+ */
+export function parsePermissionRules(raw) {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    const validActions = new Set(['allow', 'deny', 'ask']);
+    return raw.flatMap((entry) => {
+        if (typeof entry !== 'string') {
+            return [];
+        }
+        const parts = entry.split(':').map((s) => {
+            return s.trim();
+        });
+        if (parts.length === 2) {
+            const [permission, rawAction] = parts;
+            const action = rawAction.toLowerCase();
+            if (!permission || !validActions.has(action)) {
+                return [];
+            }
+            return [{ permission, pattern: '*', action: action }];
+        }
+        if (parts.length >= 3) {
+            // Last segment is the action, first segment is the permission,
+            // everything in between is the pattern (may contain colons in theory,
+            // but unlikely for tool patterns).
+            const permission = parts[0];
+            const rawAction = parts[parts.length - 1];
+            const action = rawAction.toLowerCase();
+            const pattern = parts.slice(1, -1).join(':');
+            if (!permission || !pattern || !validActions.has(action)) {
+                return [];
+            }
+            return [{ permission, pattern, action: action }];
+        }
+        return [];
+    });
+}
+// ── Injection guard per-session config ───────────────────────────
+// Per-session injection guard patterns are written as JSON files to
+// <dataDir>/injection-guard/<sessionId>.json. The injection guard plugin
+// (running inside the opencode server process) reads DORIMAKI_DATA_DIR env
+// var to find these files in tool.execute.after.
+// This avoids needing env vars (which are per-process, not per-session).
+function getInjectionGuardDir() {
+    return path.join(getDataDir(), 'injection-guard');
+}
+/**
+ * Write per-session injection guard config so the plugin picks it up.
+ * Only call this if injectionGuardPatterns is non-empty.
+ */
+export function writeInjectionGuardConfig({ sessionId, scanPatterns, }) {
+    if (scanPatterns.length === 0) {
+        return;
+    }
+    try {
+        const dir = getInjectionGuardDir();
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${sessionId}.json`), JSON.stringify({ scanPatterns }));
+    }
+    catch {
+        // Best effort -- don't crash the bot if data dir write fails
+    }
+}
+/**
+ * Remove per-session injection guard config file.
+ */
+export function removeInjectionGuardConfig({ sessionId }) {
+    try {
+        fs.unlinkSync(path.join(getInjectionGuardDir(), `${sessionId}.json`));
+    }
+    catch {
+        // File may already be gone
+    }
+}
+/**
+ * Read per-session injection guard config. Used by the dorimaki plugin
+ * inside the opencode server process.
+ */
+export function readInjectionGuardConfig({ sessionId }) {
+    try {
+        const raw = fs.readFileSync(path.join(getInjectionGuardDir(), `${sessionId}.json`), 'utf-8');
+        return JSON.parse(raw);
+    }
+    catch {
+        return null;
+    }
+}
+// ── Public helpers ───────────────────────────────────────────────
+// These helpers expose the single shared server and directory-scoped clients.
+export function getOpencodeServerPort(_directory) {
+    return singleServer?.port ?? null;
+}
+export function getOpencodeServerBaseUrl() {
+    return singleServer?.baseUrl ?? null;
+}
+export function getOpencodeClient(directory) {
+    if (!singleServer) {
+        return null;
+    }
+    return getOrCreateClient({
+        baseUrl: singleServer.baseUrl,
+        directory,
+    });
+}
+/**
+ * Extract a human-readable message from an OpenCode SDK error response.
+ * Probes each known shape and falls back to a generic message.
+ */
+export function extractSdkErrorMessage(error) {
+    if (!error) {
+        return 'Unknown OpenCode API error';
+    }
+    if (error.data?.message) {
+        const name = error.name ? `${error.name}: ` : '';
+        const ref = error.data.ref ? ` (${error.data.ref})` : '';
+        return `${name}${error.data.message}${ref}`;
+    }
+    if (error.message) {
+        return error.message;
+    }
+    if (error.errors && error.errors.length > 0) {
+        return JSON.stringify(error.errors);
+    }
+    if (error._tag) {
+        return error._tag;
+    }
+    if (error.name) {
+        return error.name;
+    }
+    return 'Unknown OpenCode API error';
+}
+/**
+ * Stop the single opencode server.
+ * Used for process teardown, tests, and explicit restarts.
+ */
+export async function stopOpencodeServer() {
+    // A server still booting lives only in startingServerProcess.
+    killStartingServerProcessNow({ reason: 'stop-opencode-server' });
+    startingServerProcess = null;
+    if (!singleServer) {
+        return false;
+    }
+    const server = singleServer;
+    // For discovered servers (from another process), just clear local state
+    // without killing the process we don't own.
+    if (server.discovered || !server.process) {
+        singleServer = null;
+        clientCache.clear();
+        serverRetryCount = 0;
+        return true;
+    }
+    opencodeLogger.log(`Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`);
+    if (!server.process.killed) {
+        const killResult = errore.try(() => {
+            server.process.kill('SIGTERM');
+        }, (error) => {
+            return new Error('Failed to send SIGTERM to opencode server', {
+                cause: error,
+            });
+        });
+        if (killResult instanceof Error) {
+            opencodeLogger.warn(killResult.message);
+        }
+    }
+    singleServer = null;
+    clientCache.clear();
+    serverRetryCount = 0;
+    // Don't dispose the global listener here — it will reconnect when
+    // the server restarts. Only abort the current SSE connection so it
+    // doesn't hang on a dead server.
+    restartGlobalEventListener();
+    await new Promise((resolve) => {
+        setTimeout(resolve, 1000);
+    });
+    return true;
+}
+/**
+ * Restart the single opencode server.
+ * Kills the existing process and starts a new one.
+ * Used for resolving opencode state issues, refreshing auth, plugins, etc.
+ */
+export async function restartOpencodeServer() {
+    if (singleServer) {
+        await stopOpencodeServer();
+    }
+    // Reset retry count for the fresh start
+    serverRetryCount = 0;
+    const result = await ensureSingleServer();
+    if (result instanceof Error)
+        return result;
+    restartGlobalEventListener();
+    await waitForGlobalEventListener();
+    return true;
+}

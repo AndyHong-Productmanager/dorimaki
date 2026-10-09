@@ -1,0 +1,126 @@
+// Runtime configuration for Dorimaki bot.
+// Thin re-export layer over the centralized zustand store (store.ts).
+// Getter/setter functions are kept for backwards compatibility so existing
+// import sites don't need to change. They delegate to store.getState() and
+// store.setState() under the hood.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { store } from './store.js';
+const DEFAULT_DATA_DIR = path.join(os.homedir(), '.dorimaki');
+/**
+ * Get the data directory path.
+ * Order: store value, vitest temp dir, DORIMAKI_DATA_DIR, then ~/.dorimaki.
+ * Under vitest (DORIMAKI_VITEST env var), auto-creates an isolated temp dir so
+ * tests never touch the real ~/.dorimaki/ database. Tests that need a specific
+ * dir can still call setDataDir() before any DB access to override this.
+ */
+export function getDataDir() {
+    const current = store.getState().dataDir;
+    if (current) {
+        return current;
+    }
+    // Tests stay isolated even if the parent process exported DORIMAKI_DATA_DIR.
+    if (process.env.DORIMAKI_VITEST) {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-test-'));
+        store.setState({ dataDir: tmpDir });
+        return tmpDir;
+    }
+    // Child processes (OpenCode server, dorimaki shim commands) inherit this from
+    // opencode.ts. Without it they would silently use ~/.dorimaki.
+    const fromEnv = process.env.DORIMAKI_DATA_DIR;
+    if (fromEnv) {
+        const resolved = path.resolve(fromEnv);
+        store.setState({ dataDir: resolved });
+        return resolved;
+    }
+    store.setState({ dataDir: DEFAULT_DATA_DIR });
+    return DEFAULT_DATA_DIR;
+}
+/**
+ * Set the data directory path.
+ * Creates the directory if it doesn't exist.
+ * Must be called before any database or path-dependent operations.
+ */
+export function setDataDir(dir) {
+    const resolvedDir = path.resolve(dir);
+    if (!fs.existsSync(resolvedDir)) {
+        fs.mkdirSync(resolvedDir, { recursive: true });
+    }
+    store.setState({ dataDir: resolvedDir });
+}
+/**
+ * Get the projects directory path (for /create-new-project command).
+ * Returns the custom --projects-dir if set, otherwise <dataDir>/projects.
+ */
+export function getProjectsDir() {
+    const custom = store.getState().projectsDir;
+    if (custom) {
+        return custom;
+    }
+    return path.join(getDataDir(), 'projects');
+}
+/**
+ * Set a custom projects directory path (from --projects-dir CLI flag).
+ * Creates the directory if it doesn't exist.
+ */
+export function setProjectsDir(dir) {
+    const resolvedDir = path.resolve(dir);
+    if (!fs.existsSync(resolvedDir)) {
+        fs.mkdirSync(resolvedDir, { recursive: true });
+    }
+    store.setState({ projectsDir: resolvedDir });
+}
+/**
+ * Get the permission button timeout in milliseconds.
+ * How long permission buttons remain active before auto-rejecting.
+ * Defaults to 10 minutes (600000ms).
+ */
+export function getPermissionTimeoutMs() {
+    return store.getState().permissionTimeoutMs;
+}
+/**
+ * Whether external directory access is restricted to the session working
+ * directory plus a few known-safe paths.
+ * Defaults to false: every directory is allowed and users protect specific
+ * folders with their own `deny`/`ask` rules in opencode.json.
+ */
+export function getRestrictExternalDirectories() {
+    return store.getState().restrictExternalDirectories;
+}
+export function getOpencodeHostname() {
+    return store.getState().opencodeHostname;
+}
+export function getOpencodePort() {
+    return store.getState().opencodePort;
+}
+const DEFAULT_LOCK_PORT = 29988;
+/**
+ * Derive a lock port from the data directory path.
+ * If DORIMAKI_LOCK_PORT is set to a valid TCP port, it takes precedence.
+ * Returns 29988 for the default ~/.dorimaki directory (backwards compatible).
+ * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
+ */
+export function getLockPort() {
+    const envPortRaw = process.env['DORIMAKI_LOCK_PORT'];
+    if (envPortRaw) {
+        const envPort = Number.parseInt(envPortRaw, 10);
+        if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) {
+            return envPort;
+        }
+    }
+    const dir = getDataDir();
+    // Use original port for default data dir (backwards compatible)
+    if (dir === DEFAULT_DATA_DIR) {
+        return DEFAULT_LOCK_PORT;
+    }
+    // Hash-based port for custom data dirs
+    let hash = 0;
+    for (let i = 0; i < dir.length; i++) {
+        const char = dir.charCodeAt(i);
+        hash = (hash << 5) - hash + char;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    // Map to port range 30000-39999
+    return 30000 + (Math.abs(hash) % 10000);
+}
