@@ -465,7 +465,7 @@ describe('transcription retries', () => {
 })
 
 const liveVoiceTest = describe.skipIf(
-  process.env['KIMAKI_LIVE_VOICE_TESTS'] !== '1',
+  process.env['DORI_LIVE_VOICE_TESTS'] !== '1',
 )
 
 liveVoiceTest('transcribeAudio with real API', () => {

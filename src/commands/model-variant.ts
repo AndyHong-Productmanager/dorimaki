@@ -25,7 +25,7 @@ import {
   getVariantCascade,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import { resolveTextChannel, getDoriMetadata } from '../discord-utils.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
@@ -142,12 +142,12 @@ export async function showModelVariantPicker({
       resolveTextChannel(thread),
       getThreadSession(thread.id),
     ])
-    const metadata = await getKimakiMetadata(textChannel)
+    const metadata = await getDoriMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = textChannel?.id || channel.id
     sessionId = threadSessionId
   } else if (channel.type === ChannelType.GuildText) {
-    const metadata = await getKimakiMetadata(channel)
+    const metadata = await getDoriMetadata(channel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = channel.id
   } else {
@@ -434,7 +434,7 @@ async function applyVariant({
   const modelId = context.modelId
   const variantSuffix = variant ? ` (${variant})` : ''
   const agentTip =
-    '\n_Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_'
+    '\n_Tip: create [agent .md files](https://DORIDOTDEV/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_'
 
   try {
     if (scope === 'session') {

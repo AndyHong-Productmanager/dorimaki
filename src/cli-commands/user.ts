@@ -135,8 +135,8 @@ cli
 
       if (!options.port && command.length === 0) {
         cliLogger.error('Error: --port is required unless a command is provided after --')
-        cliLogger.error(`\nUsage: kimaki tunnel [-- command]`)
-        cliLogger.error(`   or: kimaki tunnel --port <port>`)
+        cliLogger.error(`\nUsage: dori tunnel [-- command]`)
+        cliLogger.error(`   or: dori tunnel --port <port>`)
         process.exit(EXIT_NO_RESTART)
       }
 
@@ -150,7 +150,7 @@ cli
         port,
         tunnelId: options.tunnelId || undefined,
         localHost: options.host || undefined,
-        baseDomain: 'kimaki.dev',
+        baseDomain: 'DORIDOTDEV',
         serverUrl: options.server || undefined,
         command: command.length > 0 ? command : undefined,
         kill: options.kill,

@@ -1,6 +1,6 @@
-// Kimaki self-upgrade utilities.
-// Detects the package manager used to install kimaki, checks npm for newer versions,
-// and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
+// Dori self-upgrade utilities.
+// Detects the package manager used to install dori, checks npm for newer versions,
+// and runs the global upgrade command. Used by both CLI `dori upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
 
 import fs from 'node:fs'
@@ -12,8 +12,8 @@ const logger = createLogger(LogPrefix.CLI)
 
 type Pm = 'bun' | 'pnpm' | 'npm'
 
-// Detects which package manager globally installed kimaki, used to run the
-// correct `<pm> i -g kimaki@latest` upgrade command.
+// Detects which package manager globally installed dori, used to run the
+// correct `<pm> i -g dori@latest` upgrade command.
 //
 // Detection order:
 // 1. npm_config_user_agent — set by npx/bunx/pnpm dlx, reliable for those cases
@@ -45,7 +45,7 @@ export function detectPm(): Pm {
     if (p.includes('/pnpm/')) {
       return 'pnpm'
     }
-    // npm global installs typically live under lib/node_modules/kimaki without
+    // npm global installs typically live under lib/node_modules/dori without
     // any pnpm or bun path segments, so if we reach here it's likely npm
   }
 
@@ -76,7 +76,7 @@ export function getCurrentVersion(): string {
 
 export async function getLatestNpmVersion(): Promise<string | null> {
   try {
-    const res = await fetch('https://registry.npmjs.org/kimaki/latest', {
+    const res = await fetch('https://registry.npmjs.org/dori/latest', {
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
@@ -101,15 +101,15 @@ export async function upgrade(): Promise<string | null> {
   }
 
   const pm = detectPm()
-  logger.log(`Upgrading kimaki from v${current} to v${latest} using ${pm}...`)
-  await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
+  logger.log(`Upgrading dori from v${current} to v${latest} using ${pm}...`)
+  await execAsync(`${pm} i -g dori@latest`, { timeout: 120_000 })
 
   return latest
 }
 
 // Fire-and-forget background upgrade check on bot startup.
 // Only upgrades if a newer version is available. Errors are silently ignored.
-export async function backgroundUpgradeKimaki(): Promise<void> {
+export async function backgroundUpgradeDori(): Promise<void> {
   try {
     const current = getCurrentVersion()
     const latest = await getLatestNpmVersion()
@@ -118,9 +118,9 @@ export async function backgroundUpgradeKimaki(): Promise<void> {
     }
 
     const pm = detectPm()
-    logger.debug(`Background kimaki upgrade started: v${current} -> v${latest}`)
-    await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
-    logger.debug(`Background kimaki upgrade completed: v${latest}`)
+    logger.debug(`Background dori upgrade started: v${current} -> v${latest}`)
+    await execAsync(`${pm} i -g dori@latest`, { timeout: 120_000 })
+    logger.debug(`Background dori upgrade completed: v${latest}`)
   } catch {
     // silently ignored, non-critical
   }

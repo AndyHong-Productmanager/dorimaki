@@ -1,4 +1,4 @@
-// /screenshare command - Start screen sharing via VNC + WebSocket bridge + kimaki tunnel.
+// /screenshare command - Start screen sharing via VNC + WebSocket bridge + dori tunnel.
 // On macOS: uses built-in Screen Sharing (port 5900).
 // On Linux: spawns x11vnc against the current $DISPLAY.
 // Exposes the VNC stream via an in-process websockify bridge and a traforo tunnel,
@@ -49,7 +49,7 @@ const activeSessions = new Map<string, ScreenshareSession>()
 const VNC_PORT = 5900
 const MAX_SESSION_MINUTES = 30
 const MAX_SESSION_MS = MAX_SESSION_MINUTES * 60 * 1000
-const TUNNEL_BASE_DOMAIN = 'kimaki.dev'
+const TUNNEL_BASE_DOMAIN = 'DORIDOTDEV'
 const SCREENSHARE_TUNNEL_ID_BYTES = 16
 
 // Public noVNC client — we point it at our tunnel URL

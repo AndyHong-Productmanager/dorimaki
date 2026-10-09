@@ -1,8 +1,8 @@
 import { PermissionsBitField, type Message } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
-  hasKimakiAdminPermission,
-  hasKimakiBotPermission,
+  hasDoriAdminPermission,
+  hasDoriBotPermission,
   raceDiscordRename,
   resolveFooterMentionUserId,
   resolveGuildMessageMember,
@@ -110,7 +110,7 @@ describe('splitMarkdownForDiscord', () => {
   })
 })
 
-describe('hasKimakiBotPermission', () => {
+describe('hasDoriBotPermission', () => {
   afterEach(() => {
     store.setState({ allowAllUsers: false })
   })
@@ -128,17 +128,17 @@ describe('hasKimakiBotPermission', () => {
       roles: [],
     } as any
 
-    expect(hasKimakiBotPermission(member, guild)).toBe(true)
+    expect(hasDoriBotPermission(member, guild)).toBe(true)
   })
 
-  test('still blocks no-kimaki role even when allowAllUsers is enabled', () => {
+  test('still blocks no-dori role even when allowAllUsers is enabled', () => {
     store.setState({ allowAllUsers: true })
-    const noKimakiRoleId = '222'
+    const noDoriRoleId = '222'
     const guild = {
       ownerId: 'owner-id',
       roles: {
         cache: new Map([
-          [noKimakiRoleId, { id: noKimakiRoleId, name: 'no-kimaki' }],
+          [noDoriRoleId, { id: noDoriRoleId, name: 'no-dori' }],
         ]),
       },
     } as any
@@ -146,19 +146,19 @@ describe('hasKimakiBotPermission', () => {
     const member = {
       user: { id: 'member-id' },
       permissions: '0',
-      roles: [noKimakiRoleId],
+      roles: [noDoriRoleId],
     } as any
 
-    expect(hasKimakiBotPermission(member, guild)).toBe(false)
+    expect(hasDoriBotPermission(member, guild)).toBe(false)
   })
 
-  test('allows API interaction member when kimaki role exists', () => {
-    const kimakiRoleId = '111'
+  test('allows API interaction member when dori role exists', () => {
+    const doriRoleId = '111'
     const guild = {
       ownerId: 'owner-id',
       roles: {
         cache: new Map([
-          [kimakiRoleId, { id: kimakiRoleId, name: 'Kimaki' }],
+          [doriRoleId, { id: doriRoleId, name: 'Dori' }],
         ]),
       },
     } as any
@@ -166,10 +166,10 @@ describe('hasKimakiBotPermission', () => {
     const member = {
       user: { id: 'member-id' },
       permissions: '0',
-      roles: [kimakiRoleId],
+      roles: [doriRoleId],
     } as any
 
-    expect(hasKimakiBotPermission(member, guild)).toBe(true)
+    expect(hasDoriBotPermission(member, guild)).toBe(true)
   })
 
   test('allows API interaction member with ManageGuild permission', () => {
@@ -184,7 +184,7 @@ describe('hasKimakiBotPermission', () => {
       roles: [],
     } as any
 
-    expect(hasKimakiBotPermission(member, guild)).toBe(true)
+    expect(hasDoriBotPermission(member, guild)).toBe(true)
   })
 
   test('denies API interaction member with no role, owner, or admin rights', () => {
@@ -199,11 +199,11 @@ describe('hasKimakiBotPermission', () => {
       roles: [],
     } as any
 
-    expect(hasKimakiBotPermission(member, guild)).toBe(false)
+    expect(hasDoriBotPermission(member, guild)).toBe(false)
   })
 })
 
-describe('hasKimakiAdminPermission', () => {
+describe('hasDoriAdminPermission', () => {
   afterEach(() => {
     store.setState({ allowAllUsers: false })
   })
@@ -221,7 +221,7 @@ describe('hasKimakiAdminPermission', () => {
       roles: [],
     } as any
 
-    expect(hasKimakiAdminPermission(member, guild)).toBe(false)
+    expect(hasDoriAdminPermission(member, guild)).toBe(false)
   })
 
   test('allows admin even when allowAllUsers is enabled', () => {
@@ -237,7 +237,7 @@ describe('hasKimakiAdminPermission', () => {
       roles: [],
     } as any
 
-    expect(hasKimakiAdminPermission(member, guild)).toBe(true)
+    expect(hasDoriAdminPermission(member, guild)).toBe(true)
   })
 })
 

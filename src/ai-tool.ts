@@ -1,5 +1,5 @@
-// Minimal tool definition helper used by Kimaki.
-// This replaces the Vercel AI SDK `tool()` helper so Kimaki can define typed
+// Minimal tool definition helper used by Dori.
+// This replaces the Vercel AI SDK `tool()` helper so Dori can define typed
 // tools (Zod input schema + execute) without depending on the full `ai` package.
 
 import type { z } from 'zod'

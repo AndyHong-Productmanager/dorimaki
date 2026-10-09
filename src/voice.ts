@@ -96,8 +96,8 @@ export async function requestOpenAIAudioTranscription({
       model: OPENAI_AUDIO_CHAT_MODEL,
       temperature,
       max_completion_tokens: 2048,
-      user: 'kimaki:voice-transcription',
-      safety_identifier: 'kimaki:voice-transcription',
+      user: 'dori:voice-transcription',
+      safety_identifier: 'dori:voice-transcription',
       tools: [
         {
           type: 'function',
