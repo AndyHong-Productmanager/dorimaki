@@ -20,7 +20,7 @@ describe('analytics', () => {
   let tmpDir: string
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dori-analytics-'))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-analytics-'))
     setDataDir(tmpDir)
     _resetAnalyticsForTests()
   })
@@ -62,9 +62,9 @@ describe('analytics', () => {
     }).not.toThrow()
   })
 
-  it('DORI_STRADA_ENABLED=0 keeps initAnalytics from throwing', () => {
-    const prev = process.env.DORI_STRADA_ENABLED
-    process.env.DORI_STRADA_ENABLED = '0'
+  it('DORIMAKI_STRADA_ENABLED=0 keeps initAnalytics from throwing', () => {
+    const prev = process.env.DORIMAKI_STRADA_ENABLED
+    process.env.DORIMAKI_STRADA_ENABLED = '0'
     try {
       initAnalytics()
       expect(() => {
@@ -72,9 +72,9 @@ describe('analytics', () => {
       }).not.toThrow()
     } finally {
       if (prev === undefined) {
-        delete process.env.DORI_STRADA_ENABLED
+        delete process.env.DORIMAKI_STRADA_ENABLED
       } else {
-        process.env.DORI_STRADA_ENABLED = prev
+        process.env.DORIMAKI_STRADA_ENABLED = prev
       }
     }
   })

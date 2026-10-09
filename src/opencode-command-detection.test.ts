@@ -120,10 +120,10 @@ describe('extractLeadingOpencodeCommand', () => {
     `)
   })
 
-  test('dori-cli prefix on its own line', () => {
+  test('dorimaki-cli prefix on its own line', () => {
     expect(
       extractLeadingOpencodeCommand(
-        '» **dori-cli:**\n/build foo bar',
+        '» **dorimaki-cli:**\n/build foo bar',
         fixtures,
       ),
     ).toMatchInlineSnapshot(`

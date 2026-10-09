@@ -1,4 +1,4 @@
-// Dori git worktree adaptor for OpenCode's experimental workspace system.
+// Dorimaki git worktree adaptor for OpenCode's experimental workspace system.
 // Runs inside the opencode server process (NOT the bot process).
 //
 // PLUGIN SAFETY: This file must NOT import config.ts, logger.ts, or any
@@ -11,13 +11,13 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 import {
   createWorktreeCore,
-  DORI_WORKTREE_ADAPTER_TYPE,
+  DORIMAKI_WORKTREE_ADAPTER_TYPE,
   removeWorktreeFromOwnRepository,
 } from './git-worktree-core.js'
 
 /**
  * Compute the on-disk directory for a managed worktree.
- * Mirrors getManagedWorktreeDirectory from worktrees.ts but reads DORI_DATA_DIR
+ * Mirrors getManagedWorktreeDirectory from worktrees.ts but reads DORIMAKI_DATA_DIR
  * from the environment instead of config.ts (which is not available in the
  * opencode server process).
  */
@@ -28,9 +28,9 @@ function computeWorktreeDirectory({
   projectDirectory: string
   branchName: string
 }): string | Error {
-  const dataDir = process.env.DORI_DATA_DIR
+  const dataDir = process.env.DORIMAKI_DATA_DIR
   if (!dataDir) {
-    return new Error('DORI_DATA_DIR not set — cannot compute worktree directory')
+    return new Error('DORIMAKI_DATA_DIR not set — cannot compute worktree directory')
   }
   const projectHash = crypto
     .createHash('sha1')
@@ -38,14 +38,14 @@ function computeWorktreeDirectory({
     .digest('hex')
     .slice(0, 8)
   const withoutPrefix = branchName
-    .replace(/^opencode\/dori-/, '')
+    .replace(/^opencode\/dorimaki-/, '')
     .replaceAll('/', '-')
   return path.join(dataDir, 'worktrees', projectHash, withoutPrefix)
 }
 
 function getWorktreeIdentity(info: WorkspaceInfo) {
   if (!info.extra || typeof info.extra !== 'object') {
-    return new Error('Dori worktree identity is missing')
+    return new Error('Dorimaki worktree identity is missing')
   }
   const identity: { projectDirectory?: string; baseCommit?: string } = {}
   Object.assign(identity, info.extra)
@@ -53,13 +53,13 @@ function getWorktreeIdentity(info: WorkspaceInfo) {
     typeof identity.projectDirectory !== 'string' ||
     !path.isAbsolute(identity.projectDirectory)
   ) {
-    return new Error('Dori worktree project directory must be absolute')
+    return new Error('Dorimaki worktree project directory must be absolute')
   }
   if (
     typeof identity.baseCommit !== 'string' ||
     !/^[0-9a-f]{40}$/i.test(identity.baseCommit)
   ) {
-    return new Error('Dori worktree base commit must be a full commit SHA')
+    return new Error('Dorimaki worktree base commit must be a full commit SHA')
   }
   return {
     projectDirectory: identity.projectDirectory,
@@ -67,10 +67,10 @@ function getWorktreeIdentity(info: WorkspaceInfo) {
   }
 }
 
-function createDoriWorktreeAdaptor(): WorkspaceAdapter {
+function createDorimakiWorktreeAdaptor(): WorkspaceAdapter {
   return {
-    name: 'Dori Worktree',
-    description: 'Create a git worktree managed by Dori',
+    name: 'Dorimaki Worktree',
+    description: 'Create a git worktree managed by Dorimaki',
 
     configure(info: WorkspaceInfo): WorkspaceInfo {
       const identity = getWorktreeIdentity(info)
@@ -130,15 +130,15 @@ function createDoriWorktreeAdaptor(): WorkspaceAdapter {
 }
 
 /**
- * Plugin entrypoint — registers the dori-worktree adaptor.
+ * Plugin entrypoint — registers the dorimaki-worktree adaptor.
  * Called by OpenCode's plugin loader.
  */
-export const doriWorkspaceAdaptorPlugin: Plugin = async ({
+export const dorimakiWorkspaceAdaptorPlugin: Plugin = async ({
   experimental_workspace,
 }) => {
   experimental_workspace.register(
-    DORI_WORKTREE_ADAPTER_TYPE,
-    createDoriWorktreeAdaptor(),
+    DORIMAKI_WORKTREE_ADAPTER_TYPE,
+    createDorimakiWorktreeAdaptor(),
   )
   return {}
 }

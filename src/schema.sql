@@ -206,7 +206,7 @@ CREATE TABLE IF NOT EXISTS `thread_queue_items` (
 CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`thread_id` text PRIMARY KEY,
 	`session_id` text NOT NULL,
-	`source` text DEFAULT 'dori' NOT NULL,
+	`source` text DEFAULT 'dorimaki' NOT NULL,
 	`last_synced_name` text,
 	`parent_session_id` text,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,

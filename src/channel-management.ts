@@ -1,5 +1,5 @@
 // Discord channel and category management.
-// Creates and manages Dori project channels (text + voice pairs),
+// Creates and manages Dorimaki project channels (text + voice pairs),
 // extracts channel metadata from topic tags, and ensures category structure.
 
 import {
@@ -37,7 +37,7 @@ import {
 export async function getUserProjectCount(): Promise<number | null> {
   try {
     const channels = await listTrackedTextChannels()
-    const defaultDir = path.resolve(getDefaultDoriDirectory())
+    const defaultDir = path.resolve(getDefaultDorimakiDirectory())
     const dirs = new Set(
       channels
         .map((row) => path.resolve(row.directory))
@@ -72,28 +72,28 @@ const logger = createLogger(LogPrefix.CHANNEL)
 type CategoryKind = 'text' | 'audio'
 
 function defaultCategoryName(kind: CategoryKind, botName?: string) {
-  const isDoriBot = botName?.toLowerCase() === 'dori'
+  const isDorimakiBot = botName?.toLowerCase() === 'dorimaki'
   if (kind === 'audio') {
-    return botName && !isDoriBot ? `Dori Audio ${botName}` : 'Dori Audio'
+    return botName && !isDorimakiBot ? `Dorimaki Audio ${botName}` : 'Dorimaki Audio'
   }
-  return botName && !isDoriBot ? `Dori ${botName}` : 'Dori'
+  return botName && !isDorimakiBot ? `Dorimaki ${botName}` : 'Dorimaki'
 }
 
-function defaultDoriChannelName({
+function defaultDorimakiChannelName({
   botName,
   isGatewayMode,
 }: {
   botName?: string
   isGatewayMode: boolean
 }) {
-  if (isGatewayMode || !botName) return 'dori'
+  if (isGatewayMode || !botName) return 'dorimaki'
   const sanitized = botName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-  if (!sanitized || sanitized === 'dori') return 'dori'
-  return `dori-${sanitized}`.slice(0, 100)
+  if (!sanitized || sanitized === 'dorimaki') return 'dorimaki'
+  return `dorimaki-${sanitized}`.slice(0, 100)
 }
 
 const categoryEnsures = new Map<string, Promise<CategoryChannel>>()
@@ -162,7 +162,7 @@ async function adoptParentFromTrackedChannels({
   return null
 }
 
-async function resolveDoriCategory({
+async function resolveDorimakiCategory({
   guild,
   kind,
   botName,
@@ -203,17 +203,17 @@ async function resolveDoriCategory({
   return created
 }
 
-export function ensureDoriCategory(guild: Guild, botName?: string) {
+export function ensureDorimakiCategory(guild: Guild, botName?: string) {
   return ensureCategorySerialized({
     key: `${guild.id}:text`,
-    run: () => resolveDoriCategory({ guild, kind: 'text', botName }),
+    run: () => resolveDorimakiCategory({ guild, kind: 'text', botName }),
   })
 }
 
-export function ensureDoriAudioCategory(guild: Guild, botName?: string) {
+export function ensureDorimakiAudioCategory(guild: Guild, botName?: string) {
   return ensureCategorySerialized({
     key: `${guild.id}:audio`,
-    run: () => resolveDoriCategory({ guild, kind: 'audio', botName }),
+    run: () => resolveDorimakiCategory({ guild, kind: 'audio', botName }),
   })
 }
 
@@ -240,12 +240,12 @@ export async function createProjectChannels({
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 100)
 
-  const doriCategory = await ensureDoriCategory(guild, botName)
+  const dorimakiCategory = await ensureDorimakiCategory(guild, botName)
 
   const textChannel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
-    parent: doriCategory,
+    parent: dorimakiCategory,
     // Channel configuration is stored in SQLite, not in the topic
   })
 
@@ -263,12 +263,12 @@ export async function createProjectChannels({
   let voiceChannelId: string | null = null
 
   if (enableVoiceChannels) {
-    const doriAudioCategory = await ensureDoriAudioCategory(guild, botName)
+    const dorimakiAudioCategory = await ensureDorimakiAudioCategory(guild, botName)
 
     const voiceChannel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildVoice,
-      parent: doriAudioCategory,
+      parent: dorimakiAudioCategory,
     })
 
     await setChannelDirectory({
@@ -292,7 +292,7 @@ export type ChannelWithTags = {
   id: string
   name: string
   description: string | null
-  doriDirectory?: string
+  dorimakiDirectory?: string
 }
 
 export async function getChannelsWithDescriptions(
@@ -314,7 +314,7 @@ export async function getChannelsWithDescriptions(
       id: channel.id,
       name: channel.name,
       description,
-      doriDirectory: channelConfig?.directory,
+      dorimakiDirectory: channelConfig?.directory,
     })
   }
 
@@ -335,25 +335,25 @@ __pycache__/
 *.egg-info/
 `
 
-/** Returns the absolute path to the default dori project directory. */
-export function getDefaultDoriDirectory(): string {
-  return path.join(getProjectsDir(), 'dori')
+/** Returns the absolute path to the default dorimaki project directory. */
+export function getDefaultDorimakiDirectory(): string {
+  return path.join(getProjectsDir(), 'dorimaki')
 }
 
 const DEFAULT_CHANNEL_TOPIC =
-  'General channel for misc tasks with Dori. Not connected to a specific OpenCode project or repository.'
+  'General channel for misc tasks with Dorimaki. Not connected to a specific OpenCode project or repository.'
 
 /**
- * Create (or find) the default "dori" channel for general-purpose tasks.
- * Channel name is "dori-{botName}" for self-hosted bots, "dori" for gateway.
- * Directory is ~/.dori/projects/dori, git-initialized with a .gitignore.
+ * Create (or find) the default "dorimaki" channel for general-purpose tasks.
+ * Channel name is "dorimaki-{botName}" for self-hosted bots, "dorimaki" for gateway.
+ * Directory is ~/.dorimaki/projects/dorimaki, git-initialized with a .gitignore.
  *
  * Idempotency: checks the database for an existing channel mapped to the
- * dori projects directory. Also scans this machine's category for the
+ * dorimaki projects directory. Also scans this machine's category for the
  * exact default channel name as a fallback for channels created before
  * DB mapping existed.
  */
-export async function createDefaultDoriChannel({
+export async function createDefaultDorimakiChannel({
   guild,
   botName,
   appId,
@@ -369,14 +369,14 @@ export async function createDefaultDoriChannel({
   channelName: string
   projectDirectory: string
 } | null> {
-  const projectDirectory = getDefaultDoriDirectory()
+  const projectDirectory = getDefaultDorimakiDirectory()
 
-  // Ensure the default dori project directory exists before any DB mapping
+  // Ensure the default dorimaki project directory exists before any DB mapping
   // restoration or git setup. Custom data dirs may not have <dataDir>/projects
   // created yet, and later writes assume the full path is present.
   if (!fs.existsSync(projectDirectory)) {
     fs.mkdirSync(projectDirectory, { recursive: true })
-    logger.log(`Created default dori directory: ${projectDirectory}`)
+    logger.log(`Created default dorimaki directory: ${projectDirectory}`)
   }
 
   // Hydrate guild channels from API so the cache scan is complete
@@ -410,7 +410,7 @@ export async function createDefaultDoriChannel({
         guildId: guild.id,
       })
     }
-    logger.log(`Default dori channel already exists: ${mappedRow.channel_id}`)
+    logger.log(`Default dorimaki channel already exists: ${mappedRow.channel_id}`)
     return null
   }
 
@@ -421,27 +421,27 @@ export async function createDefaultDoriChannel({
   )
   if (staleForThisGuild) {
     logger.log(
-      `Default dori channel was previously provisioned for guild ${guild.name} (${guild.id}) as ${staleForThisGuild.channel_id}, but no longer exists. Skipping recreation.`,
+      `Default dorimaki channel was previously provisioned for guild ${guild.name} (${guild.id}) as ${staleForThisGuild.channel_id}, but no longer exists. Skipping recreation.`,
     )
     return null
   }
 
   // 2. Fallback: detect an existing default channel in THIS machine's group.
-  // A #dori channel in another machine's group is ignored.
-  const channelName = defaultDoriChannelName({ botName, isGatewayMode })
-  const doriCategory = await ensureDoriCategory(guild, botName)
+  // A #dorimaki channel in another machine's group is ignored.
+  const channelName = defaultDorimakiChannelName({ botName, isGatewayMode })
+  const dorimakiCategory = await ensureDorimakiCategory(guild, botName)
   const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
     if (ch.type !== ChannelType.GuildText) {
       return false
     }
-    if (ch.parentId !== doriCategory.id) {
+    if (ch.parentId !== dorimakiCategory.id) {
       return false
     }
     return ch.name === channelName
   })
   if (existingByName) {
     logger.log(
-      `Found existing default dori channel by name: ${existingByName.id}. Skipping recreation.`,
+      `Found existing default dorimaki channel by name: ${existingByName.id}. Skipping recreation.`,
     )
     return null
   }
@@ -468,7 +468,7 @@ export async function createDefaultDoriChannel({
   const textChannel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
-    parent: doriCategory,
+    parent: dorimakiCategory,
     topic: DEFAULT_CHANNEL_TOPIC,
   })
 
@@ -483,7 +483,7 @@ export async function createDefaultDoriChannel({
     source: 'onboarding',
   })
 
-  logger.log(`Created default dori channel: #${channelName} (${textChannel.id})`)
+  logger.log(`Created default dorimaki channel: #${channelName} (${textChannel.id})`)
 
   return {
     textChannel,

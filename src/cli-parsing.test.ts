@@ -6,7 +6,7 @@ import maintenanceCommands from './cli-commands/maintenance.js'
 async function parseWithGoke(argv: string[]) {
   const script = [
     "import { goke } from 'goke'",
-    'const cli = goke(\'dori\')',
+    'const cli = goke(\'dorimaki\')',
     "cli.command('send', 'Send a message').option('-c, --channel <channelId>', 'Discord channel ID').option('--thread <threadId>', 'Thread ID').option('--session <sessionId>', 'Session ID').option('--send-at <schedule>', 'Schedule')",
     "cli.command('session archive <threadId>', 'Archive a thread')",
     "cli.command('session title <title>', 'Update title').option('--session <sessionId>', 'Session ID').option('--thread <threadId>', 'Thread ID')",
@@ -37,13 +37,13 @@ async function getHelpOutput() {
   const script = [
     "import { goke } from 'goke'",
     'const stdout = { text: \'\', write(data) { this.text += String(data) } }',
-    "const cli = goke('dori', { stdout })",
+    "const cli = goke('dorimaki', { stdout })",
     "cli.command('send', 'Send a message')",
     "cli.command('multioauth list', 'List all OAuth accounts')",
     "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
     "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
     'cli.help()',
-    "cli.parse(['node', 'dori', '--help'], { run: false })",
+    "cli.parse(['node', 'dorimaki', '--help'], { run: false })",
     'process.stdout.write(stdout.text)',
   ].join(';')
 
@@ -57,7 +57,7 @@ async function getHelpOutput() {
 async function parseRootBotOptions(argv: string[]) {
   const script = [
     "import { goke } from 'goke'",
-    'const cli = goke(\'dori\')',
+    'const cli = goke(\'dorimaki\')',
     "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--enable-footer-mentions', 'Mention the thread creator in final footers')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
@@ -80,19 +80,19 @@ describe('goke CLI ID parsing', () => {
     const sessionId = '1111222233334444555'
 
     const channelResult = await parseWithGoke(
-      ['node', 'dori', 'send', '--channel', channelId],
+      ['node', 'dorimaki', 'send', '--channel', channelId],
     )
     expect(channelResult.options.channel).toBe(channelId)
     expect(typeof channelResult.options.channel).toBe('string')
 
     const threadResult = await parseWithGoke(
-      ['node', 'dori', 'send', '--thread', threadId],
+      ['node', 'dorimaki', 'send', '--thread', threadId],
     )
     expect(threadResult.options.thread).toBe(threadId)
     expect(typeof threadResult.options.thread).toBe('string')
 
     const sessionResult = await parseWithGoke(
-      ['node', 'dori', 'send', '--session', sessionId],
+      ['node', 'dorimaki', 'send', '--session', sessionId],
     )
     expect(sessionResult.options.session).toBe(sessionId)
     expect(typeof sessionResult.options.session).toBe('string')
@@ -102,7 +102,7 @@ describe('goke CLI ID parsing', () => {
     const guildId = '001230045600789'
 
     const result = await parseWithGoke(
-      ['node', 'dori', 'add-project', '--guild', guildId],
+      ['node', 'dorimaki', 'add-project', '--guild', guildId],
     )
 
     expect(result.options.guild).toBe(guildId)
@@ -116,7 +116,7 @@ describe('goke CLI ID parsing', () => {
     const result = await parseWithGoke(
       [
         'node',
-        'dori',
+        'dorimaki',
         'session',
         'title',
         title,
@@ -135,7 +135,7 @@ describe('goke CLI ID parsing', () => {
     const threadId = '0098765432109876543'
 
     const result = await parseWithGoke(
-      ['node', 'dori', 'session', 'archive', threadId],
+      ['node', 'dorimaki', 'session', 'archive', threadId],
     )
 
     expect(result.args[0]).toBe(threadId)
@@ -147,7 +147,7 @@ describe('goke CLI ID parsing', () => {
     const query = '/error\\s+42/i'
 
     const result = await parseWithGoke(
-      ['node', 'dori', 'session', 'search', query, '--channel', channelId],
+      ['node', 'dorimaki', 'session', 'search', query, '--channel', channelId],
     )
 
     expect(result.args[0]).toBe(query)
@@ -158,7 +158,7 @@ describe('goke CLI ID parsing', () => {
 
   test('parses session search --all as a boolean', async () => {
     const result = await parseWithGoke(
-      ['node', 'dori', 'session', 'search', 'auth timeout', '--all'],
+      ['node', 'dorimaki', 'session', 'search', 'auth timeout', '--all'],
     )
 
     expect(result.args[0]).toBe('auth timeout')
@@ -167,7 +167,7 @@ describe('goke CLI ID parsing', () => {
 
   test('parses session search --days as a string', async () => {
     const result = await parseWithGoke(
-      ['node', 'dori', 'session', 'search', 'auth timeout', '--days', '0'],
+      ['node', 'dorimaki', 'session', 'search', 'auth timeout', '--days', '0'],
     )
 
     expect(result.options.days).toBe('0')
@@ -180,7 +180,7 @@ describe('goke CLI ID parsing', () => {
     const result = await parseWithGoke(
       [
         'node',
-        'dori',
+        'dorimaki',
         'session',
         'export-events-jsonl',
         '--session',
@@ -199,7 +199,7 @@ describe('goke CLI ID parsing', () => {
   test('keeps --send-at cron string intact', async () => {
     const cron = '0 9 * * 1'
 
-    const result = await parseWithGoke(['node', 'dori', 'send', '--send-at', cron])
+    const result = await parseWithGoke(['node', 'dorimaki', 'send', '--send-at', cron])
 
     expect(result.options.sendAt).toBe(cron)
     expect(typeof result.options.sendAt).toBe('string')
@@ -208,7 +208,7 @@ describe('goke CLI ID parsing', () => {
   test('keeps task delete ID as string before validation', async () => {
     const taskId = '0012345'
 
-    const result = await parseWithGoke(['node', 'dori', 'task', 'delete', taskId])
+    const result = await parseWithGoke(['node', 'dorimaki', 'task', 'delete', taskId])
 
     expect(result.args[0]).toBe(taskId)
     expect(typeof result.args[0]).toBe('string')
@@ -217,7 +217,7 @@ describe('goke CLI ID parsing', () => {
   test('parses empty --user on task edit so the stored user can be cleared', async () => {
     const result = await parseWithGoke([
       'node',
-      'dori',
+      'dorimaki',
       'task',
       'edit',
       '11',
@@ -231,11 +231,11 @@ describe('goke CLI ID parsing', () => {
 
   test('multioauth account remove parses index and email as strings', async () => {
     const indexResult = await parseWithGoke(
-      ['node', 'dori', 'multioauth', 'anthropic', 'remove', '2'],
+      ['node', 'dorimaki', 'multioauth', 'anthropic', 'remove', '2'],
     )
 
     const emailResult = await parseWithGoke(
-      ['node', 'dori', 'multioauth', 'openai', 'remove', 'user@example.com'],
+      ['node', 'dorimaki', 'multioauth', 'openai', 'remove', 'user@example.com'],
     )
 
     expect(indexResult.args[0]).toBe('2')
@@ -255,7 +255,7 @@ describe('goke CLI ID parsing', () => {
     const result = await maintenanceCommands.parse(
       [
         'node',
-        'dori',
+        'dorimaki',
         'merge-worktree',
         '--strategy',
         'squash',
@@ -289,7 +289,7 @@ describe('goke CLI ID parsing', () => {
   test('parses root bot boolean flags', async () => {
     const result = await parseRootBotOptions([
       'node',
-      'dori',
+      'dorimaki',
       '--no-analytics',
       '--enable-footer-mentions',
     ])

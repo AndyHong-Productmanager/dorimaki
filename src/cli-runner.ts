@@ -1,4 +1,4 @@
-// Runtime startup and shared helpers for the Dori goke CLI.
+// Runtime startup and shared helpers for the Dorimaki goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
 import {
   intro,
@@ -18,8 +18,8 @@ import {
   deduplicateByKey,
   generateBotInstallUrl,
   generateDiscordInstallUrlForBot,
-  DORI_GATEWAY_APP_ID,
-  DORI_WEBSITE_URL,
+  DORIMAKI_GATEWAY_APP_ID,
+  DORIMAKI_WEBSITE_URL,
   abbreviatePath,
 } from './utils.js'
 import {
@@ -32,7 +32,7 @@ import {
   initializeOpencodeForDirectory,
   assertCompatibleOpencodeVersion,
   createProjectChannels,
-  createDefaultDoriChannel,
+  createDefaultDorimakiChannel,
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
@@ -70,7 +70,7 @@ import {
 } from './discord-utils.js'
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
-import { backgroundUpgradeDori } from './upgrade.js'
+import { backgroundUpgradeDorimaki } from './upgrade.js'
 import { initAnalytics, setAnalyticsBotMode } from './analytics.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { startHranaServer } from './hrana-server.js'
@@ -82,17 +82,17 @@ import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registra
 export const cliLogger = createLogger(LogPrefix.CLI)
 
 // Gateway bot mode constants.
-// DORI_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
-// DORI_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
-// DORI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
+// DORIMAKI_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
+// DORIMAKI_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
+// DORIMAKI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
 // We derive REST base from this URL by swapping ws/wss to http/https.
 // These are hardcoded because they're deploy-time constants for the gateway infrastructure.
-export const DORI_GATEWAY_PROXY_URL =
-  process.env.DORI_GATEWAY_PROXY_URL ||
-  'wss://discord-gateway.DORIDOTDEV'
+export const DORIMAKI_GATEWAY_PROXY_URL =
+  process.env.DORIMAKI_GATEWAY_PROXY_URL ||
+  'wss://discord-gateway.DORIMAKIDOTDEV'
 
-export const DORI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
-  gatewayUrl: DORI_GATEWAY_PROXY_URL,
+export const DORIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
+  gatewayUrl: DORIMAKI_GATEWAY_PROXY_URL,
 })
 
 export type OpenUrlCommand = {
@@ -131,7 +131,7 @@ function openUrlInDefaultBrowser(url: string): void {
 
 // Strip bracketed paste escape sequences from terminal input.
 // iTerm2 and other terminals wrap pasted content with \x1b[200~ and \x1b[201~
-// which can cause validation to fail on macOS. See: https://github.com/remorses/dori/issues/18
+// which can cause validation to fail on macOS. See: https://github.com/remorses/dorimaki/issues/18
 export function stripBracketedPaste(value: string | undefined): string {
   if (!value) {
     return ''
@@ -147,7 +147,7 @@ export function stripBracketedPaste(value: string | undefined): string {
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
 // For gateway mode tokens (client_id:secret format), this function returns
-// undefined -- the caller should use DORI_GATEWAY_APP_ID instead.
+// undefined -- the caller should use DORIMAKI_GATEWAY_APP_ID instead.
 export function appIdFromToken(token: string): string | undefined {
   // Gateway mode tokens use "client_id:secret" format, not base64.
   if (token.includes(':')) {
@@ -174,7 +174,7 @@ export function appIdFromToken(token: string): string | undefined {
 // In gateway mode, also sets store.discordBaseUrl so REST calls
 // are routed through the gateway-proxy REST endpoint.
 //
-// Priority: DORI_BOT_TOKEN env var takes precedence over saved DB
+// Priority: DORIMAKI_BOT_TOKEN env var takes precedence over saved DB
 // credentials. This lets CI and cross-instance commands override the
 // local bot identity. If the env token looks like a gateway credential
 // (clientId:clientSecret), the gateway proxy REST URL is set automatically.
@@ -182,12 +182,12 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
   token: string
   appId: string | undefined
 }> {
-  const envToken = process.env.DORI_BOT_TOKEN
+  const envToken = process.env.DORIMAKI_BOT_TOKEN
   if (envToken) {
     const isGatewayToken = envToken.includes(':')
     if (isGatewayToken) {
       // Gateway tokens need REST calls routed through the proxy, not discord.com
-      store.setState({ discordBaseUrl: DORI_GATEWAY_PROXY_REST_BASE_URL })
+      store.setState({ discordBaseUrl: DORIMAKI_GATEWAY_PROXY_REST_BASE_URL })
     }
     const appId = appIdOverride || appIdFromToken(envToken)
     return { token: envToken, appId }
@@ -202,7 +202,7 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
     return { token: botRow.token, appId: appIdOverride || botRow.appId }
   }
 
-  cliLogger.error('No bot token found. Set DORI_BOT_TOKEN env var or run `dori` first to set up.')
+  cliLogger.error('No bot token found. Set DORIMAKI_BOT_TOKEN env var or run `dorimaki` first to set up.')
   process.exit(EXIT_NO_RESTART)
 }
 
@@ -304,7 +304,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
 
     // When prompt exceeds Discord's limit, attach it as prompt.md alongside
     // user files so nothing is silently lost. Build prompt.md from memory so
-    // parallel dori send processes never share or unlink a temp path.
+    // parallel dorimaki send processes never share or unlink a temp path.
     const longPrompt = prompt.length > discordMaxLength
       ? buildLongPromptMessage(prompt)
       : undefined
@@ -566,7 +566,7 @@ const TRANSIENT_ERROR_CODES = new Set([
   'ERR_TLS_CERT_ALTNAME_INVALID',
   // undici fetch/WebSocket connect failures when the network is down.
   // Without these, Discord login exits EXIT_NO_RESTART and the wrapper never
-  // comes back after a connect timeout to discord-gateway.DORIDOTDEV.
+  // comes back after a connect timeout to discord-gateway.DORIMAKIDOTDEV.
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT',
@@ -631,10 +631,10 @@ export function isDiscordMemberLookupUnavailable(error: Error): boolean {
 export function formatMemberLookupUnavailableMessage(): string {
   return [
     'Discord member search is unavailable for this bot.',
-    'Most Dori features still work. Searching names with `--user` needs Server Members Intent.',
+    'Most Dorimaki features still work. Searching names with `--user` needs Server Members Intent.',
     'Use a Discord user ID or raw mention with the same `--user` flag instead:',
-    `  dori send --channel <channelId> --prompt '...' --user 535922349652836367`,
-    `  dori send --channel <channelId> --prompt '...' --user '<@535922349652836367>'`,
+    `  dorimaki send --channel <channelId> --prompt '...' --user 535922349652836367`,
+    `  dorimaki send --channel <channelId> --prompt '...' --user '<@535922349652836367>'`,
   ].join('\n')
 }
 
@@ -697,7 +697,7 @@ export function canUseInteractivePrompts(): boolean {
 
 export function exitNonInteractiveSetup(): never {
   cliLogger.error(
-    'Setup requires an interactive terminal (TTY) for prompts. Run `dori` in an interactive shell to complete setup.',
+    'Setup requires an interactive terminal (TTY) for prompts. Run `dorimaki` in an interactive shell to complete setup.',
   )
   process.exit(EXIT_NO_RESTART)
 }
@@ -722,15 +722,15 @@ export function emitJsonEvent(event: ProgrammaticEvent): void {
 export async function resolveGatewayInstallCredentials(): Promise<
   Error | { clientId: string; clientSecret: string; createdNow: boolean }
 > {
-  if (!DORI_GATEWAY_APP_ID) {
+  if (!DORIMAKI_GATEWAY_APP_ID) {
     return new Error(
-      'Gateway mode is not available yet. DORI_GATEWAY_APP_ID is not configured.',
+      'Gateway mode is not available yet. DORIMAKI_GATEWAY_APP_ID is not configured.',
     )
   }
 
   const db = await getDb()
   const gatewayBot = await db.query.bot_tokens.findFirst({
-    where: { app_id: DORI_GATEWAY_APP_ID },
+    where: { app_id: DORIMAKI_GATEWAY_APP_ID },
   })
 
   if (gatewayBot?.client_id && gatewayBot.client_secret) {
@@ -745,11 +745,11 @@ export async function resolveGatewayInstallCredentials(): Promise<
   const clientSecret = crypto.randomBytes(32).toString('hex')
 
   await setBotMode({
-    appId: DORI_GATEWAY_APP_ID,
+    appId: DORIMAKI_GATEWAY_APP_ID,
     mode: 'gateway',
     clientId,
     clientSecret,
-    proxyUrl: DORI_GATEWAY_PROXY_REST_BASE_URL,
+    proxyUrl: DORIMAKI_GATEWAY_PROXY_REST_BASE_URL,
   })
 
   return {
@@ -776,7 +776,7 @@ export async function printDiscordInstallUrlAndExit({
     }
 
     const installUrl = generateDiscordInstallUrlForBot({
-      appId: DORI_GATEWAY_APP_ID,
+      appId: DORIMAKI_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId: gatewayCredentials.clientId,
       clientSecret: gatewayCredentials.clientSecret,
@@ -800,7 +800,7 @@ export async function printDiscordInstallUrlAndExit({
   const existingBot = await getBotTokenWithMode()
 
   if (!existingBot) {
-    cliLogger.error('No bot configured yet. Run `dori` first to set up.')
+    cliLogger.error('No bot configured yet. Run `dorimaki` first to set up.')
     process.exit(EXIT_NO_RESTART)
   }
 
@@ -968,7 +968,7 @@ export async function ensureCommandAvailable({
 
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
 // Uses -s to also prevent sleep on lid close (AC power only, not battery).
-// Uses -w to watch the parent PID so caffeinate self-terminates if dori
+// Uses -w to watch the parent PID so caffeinate self-terminates if dorimaki
 // exits for any reason (SIGTERM, crash, process.exit, supervisor stop).
 export function startCaffeinate() {
   if (process.platform !== 'darwin') {
@@ -1014,7 +1014,7 @@ type CliOptions = {
 }
 
 
-export async function collectDoriChannels({
+export async function collectDorimakiChannels({
   guilds,
 }: {
   guilds: Guild[]
@@ -1022,9 +1022,9 @@ export async function collectDoriChannels({
   const guildResults = await Promise.all(
     guilds.map(async (guild) => {
       const channels = await getChannelsWithDescriptions(guild)
-      const doriChans = channels.filter((ch) => ch.doriDirectory)
+      const dorimakiChans = channels.filter((ch) => ch.dorimakiDirectory)
 
-      return { guild, channels: doriChans }
+      return { guild, channels: dorimakiChans }
     }),
   )
 
@@ -1038,16 +1038,16 @@ export async function collectDoriChannels({
  * Called after Discord login to persist channel configurations.
  */
 export async function storeChannelDirectories({
-  doriChannels,
+  dorimakiChannels,
 }: {
-  doriChannels: { guild: Guild; channels: ChannelWithTags[] }[]
+  dorimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
 }): Promise<void> {
-  for (const { guild, channels } of doriChannels) {
+  for (const { guild, channels } of dorimakiChannels) {
     for (const channel of channels) {
-      if (channel.doriDirectory) {
+      if (channel.dorimakiDirectory) {
         await setChannelDirectory({
           channelId: channel.id,
-          directory: channel.doriDirectory,
+          directory: channel.dorimakiDirectory,
           channelType: 'text',
           skipIfExists: true,
         })
@@ -1060,7 +1060,7 @@ export async function storeChannelDirectories({
         if (voiceChannel) {
           await setChannelDirectory({
             channelId: voiceChannel.id,
-            directory: channel.doriDirectory,
+            directory: channel.dorimakiDirectory,
             channelType: 'voice',
             skipIfExists: true,
           })
@@ -1075,10 +1075,10 @@ export async function storeChannelDirectories({
  * Called at the end of startup to display available channels.
  */
 export function showReadyMessage({
-  doriChannels,
+  dorimakiChannels,
   createdChannels,
 }: {
-  doriChannels: { guild: Guild; channels: ChannelWithTags[] }[]
+  dorimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
   createdChannels: { name: string; id: string; guildId: string }[]
 }): void {
   const allChannels: {
@@ -1090,13 +1090,13 @@ export function showReadyMessage({
 
   allChannels.push(...createdChannels)
 
-  doriChannels.forEach(({ guild, channels }) => {
+  dorimakiChannels.forEach(({ guild, channels }) => {
     channels.forEach((ch) => {
       allChannels.push({
         name: ch.name,
         id: ch.id,
         guildId: guild.id,
-        directory: ch.doriDirectory,
+        directory: ch.dorimakiDirectory,
       })
     })
   })
@@ -1110,13 +1110,13 @@ export function showReadyMessage({
       .join('\n')
 
     note(
-      `Your dori channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
+      `Your dorimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
       '🚀 Ready to Use',
     )
   }
 
   note(
-    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx dori` again to start the bot.',
+    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx dorimaki` again to start the bot.',
     '⚠️  Keep Running',
   )
 }
@@ -1139,7 +1139,7 @@ export async function ensureDefaultChannelsWithWelcome({
   isGatewayMode: boolean
   installerDiscordUserId?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
-  if (process.env['DORI_NO_DEFAULT_CHANNEL'] === '1') return []
+  if (process.env['DORIMAKI_NO_DEFAULT_CHANNEL'] === '1') return []
 
   const localMappings = isGatewayMode ? [] : await findChannelsByDirectory({})
   const created: { name: string; id: string; guildId: string }[] = []
@@ -1150,7 +1150,7 @@ export async function ensureDefaultChannelsWithWelcome({
         const channels = await guild.channels.fetch()
         if (!localMappings.some((row) => channels.has(row.channel_id))) continue
       }
-      const result = await createDefaultDoriChannel({
+      const result = await createDefaultDorimakiChannel({
         guild,
         botName: discordClient.user?.username,
         appId,
@@ -1173,7 +1173,7 @@ export async function ensureDefaultChannelsWithWelcome({
       }
     } catch (error) {
       cliLogger.warn(
-        `Failed to create default dori channel in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
+        `Failed to create default dorimaki channel in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
       )
     }
   }
@@ -1247,12 +1247,12 @@ export async function backgroundInit({
 }
 
 // Resolve bot credentials from (in priority order):
-// 1. DORI_BOT_TOKEN env var (headless/CI deployments)
+// 1. DORIMAKI_BOT_TOKEN env var (headless/CI deployments)
 // 2. Saved credentials in the database (self-hosted or gateway mode)
 // 3. Interactive wizard (gateway OAuth or self-hosted token entry)
 //
 // credentialSource tells the caller how creds were obtained:
-//   'env'    — DORI_BOT_TOKEN env var
+//   'env'    — DORIMAKI_BOT_TOKEN env var
 //   'saved'  — reused from database
 //   'wizard' — user just completed onboarding (gateway OAuth or self-hosted)
 export async function resolveCredentials({
@@ -1264,7 +1264,7 @@ export async function resolveCredentials({
   forceGateway: boolean
   gatewayCallbackUrl?: string
 }): Promise<CredentialResult> {
-  const envToken = process.env.DORI_BOT_TOKEN
+  const envToken = process.env.DORIMAKI_BOT_TOKEN
   const existingBot = await getBotTokenWithMode()
   // When --gateway is requested and the resolved bot is still self-hosted,
   // check if saved gateway credentials exist by looking up the gateway app_id
@@ -1272,7 +1272,7 @@ export async function resolveCredentials({
   // re-running the onboarding wizard each time.
   const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
     ? await (await getDb()).query.bot_tokens.findFirst({
-        where: { app_id: DORI_GATEWAY_APP_ID },
+        where: { app_id: DORIMAKI_GATEWAY_APP_ID },
       })
     : undefined
 
@@ -1281,12 +1281,12 @@ export async function resolveCredentials({
     const derivedAppId = appIdFromToken(envToken)
     if (!derivedAppId) {
       cliLogger.error(
-        'Could not derive Application ID from DORI_BOT_TOKEN. The token appears malformed.',
+        'Could not derive Application ID from DORIMAKI_BOT_TOKEN. The token appears malformed.',
       )
       process.exit(EXIT_NO_RESTART)
     }
     await setBotToken(derivedAppId, envToken)
-    cliLogger.log(`Using DORI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
+    cliLogger.log(`Using DORIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
     return { appId: derivedAppId, token: envToken, credentialSource: 'env', isGatewayMode: false }
   }
 
@@ -1352,11 +1352,11 @@ export async function resolveCredentials({
     : await (async () => {
         const choice = await select({
           message:
-            'How do you want to connect to Discord?\n\nGateway: uses Dori\'s pre-built bot — no setup, instant. Self-hosted: you create your own Discord bot at discord.com/developers.',
+            'How do you want to connect to Discord?\n\nGateway: uses Dorimaki\'s pre-built bot — no setup, instant. Self-hosted: you create your own Discord bot at discord.com/developers.',
           options: [
             {
               value: 'gateway' as const,
-              label: 'Gateway (pre-built Dori bot, no setup needed)',
+              label: 'Gateway (pre-built Dorimaki bot, no setup needed)',
             },
             {
               value: 'self_hosted' as const,
@@ -1373,9 +1373,9 @@ export async function resolveCredentials({
 
   // ── Gateway mode flow ──
   if (modeChoice === 'gateway') {
-    if (!DORI_GATEWAY_APP_ID) {
+    if (!DORIMAKI_GATEWAY_APP_ID) {
       cliLogger.error(
-        'Gateway mode is not available yet. DORI_GATEWAY_APP_ID is not configured.',
+        'Gateway mode is not available yet. DORIMAKI_GATEWAY_APP_ID is not configured.',
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -1387,7 +1387,7 @@ export async function resolveCredentials({
     const { clientId, clientSecret } = gatewayCredentials
 
     const oauthUrlResult = generateDiscordInstallUrlForBot({
-      appId: DORI_GATEWAY_APP_ID,
+      appId: DORIMAKI_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId,
       clientSecret,
@@ -1402,7 +1402,7 @@ export async function resolveCredentials({
 
     if (isInteractive) {
       note(
-        `Open this URL to install the Dori bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
+        `Open this URL to install the Dorimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
         'Install Bot',
       )
 
@@ -1418,7 +1418,7 @@ export async function resolveCredentials({
     const s = isInteractive ? spinner() : undefined
     s?.start('Waiting for a Discord server with the bot installed...')
 
-    const pollUrl = new URL('/api/onboarding/status', DORI_WEBSITE_URL)
+    const pollUrl = new URL('/api/onboarding/status', DORIMAKI_WEBSITE_URL)
     pollUrl.searchParams.set('client_id', clientId)
     pollUrl.searchParams.set('secret', clientSecret)
 
@@ -1505,7 +1505,7 @@ export async function resolveCredentials({
     }
 
     return {
-      appId: DORI_GATEWAY_APP_ID,
+      appId: DORIMAKI_GATEWAY_APP_ID,
       token: `${clientId}:${clientSecret}`,
       credentialSource: 'wizard',
       isGatewayMode: true,
@@ -1525,7 +1525,7 @@ export async function resolveCredentials({
     '1. Go to the "Bot" section in the left sidebar\n' +
       '2. Scroll down to "Privileged Gateway Intents"\n' +
       '3. Enable MESSAGE CONTENT INTENT by toggling it ON\n' +
-      '4. Optional: enable SERVER MEMBERS INTENT only if you want name lookup in `dori user list` and `dori send --user Tommy`\n' +
+      '4. Optional: enable SERVER MEMBERS INTENT only if you want name lookup in `dorimaki user list` and `dorimaki send --user Tommy`\n' +
       '5. Click "Save Changes" at the bottom',
     'Step 2: Enable Message Content Intent',
   )
@@ -1640,7 +1640,7 @@ export async function run({
 
 
   if (store.getState().autoUpgradeEnabled) {
-    void backgroundUpgradeDori()
+    void backgroundUpgradeDorimaki()
   }
 
   // Start in-process Hrana server before database init. Required for the bot
@@ -1676,7 +1676,7 @@ export async function run({
     preferredGatewayToken: isGatewayMode ? token : undefined,
   })
   // Always set service auth token so local and internet control-plane paths
-  // share one auth model (/dori/wake and future service endpoints).
+  // share one auth model (/dorimaki/wake and future service endpoints).
   store.setState({ gatewayToken })
 
   // In gateway mode, ensure REST calls route through the gateway proxy.
@@ -1686,15 +1686,15 @@ export async function run({
   // Without this, discord.js sends the clientId:clientSecret token to Discord
   // directly, which rejects it with "An invalid token was provided".
   if (isGatewayMode) {
-    store.setState({ discordBaseUrl: DORI_GATEWAY_PROXY_REST_BASE_URL })
+    store.setState({ discordBaseUrl: DORIMAKI_GATEWAY_PROXY_REST_BASE_URL })
   }
 
-  // When DORI_INTERNET_REACHABLE_URL is set, the hrana server exposes
-  // a /dori/wake endpoint for the gateway-proxy to wake this instance and
+  // When DORIMAKI_INTERNET_REACHABLE_URL is set, the hrana server exposes
+  // a /dorimaki/wake endpoint for the gateway-proxy to wake this instance and
   // wait until discord.js is connected. Keep Discord traffic on the normal
   // configured base URL (gateway-proxy in gateway mode).
   if (getInternetReachableBaseUrl()) {
-    cliLogger.log('Internet-reachable mode: enabling /dori/wake endpoint on hrana server')
+    cliLogger.log('Internet-reachable mode: enabling /dorimaki/wake endpoint on hrana server')
   }
 
   // Start OpenCode server as early as possible — non-blocking.
@@ -1759,7 +1759,7 @@ export async function run({
   const discordClient = await createDiscordClient()
 
   const guilds: Guild[] = []
-  const doriChannels: { guild: Guild; channels: ChannelWithTags[] }[] = []
+  const dorimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[] = []
   const createdChannels: { name: string; id: string; guildId: string }[] = []
 
   try {
@@ -1787,11 +1787,11 @@ export async function run({
         }
 
         // Process guild metadata when setup flow needs channel prompts.
-        const guildResults = await collectDoriChannels({ guilds })
+        const guildResults = await collectDorimakiChannels({ guilds })
 
         // Collect results
         for (const result of guildResults) {
-          doriChannels.push(result)
+          dorimakiChannels.push(result)
         }
 
         resolve(null)
@@ -1840,7 +1840,7 @@ export async function run({
       throw new Error('Malformed gateway token: expected clientId:clientSecret format')
     }
     const installUrlResult = generateDiscordInstallUrlForBot({
-      appId: DORI_GATEWAY_APP_ID,
+      appId: DORIMAKI_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId,
       clientSecret,
@@ -1856,7 +1856,7 @@ export async function run({
       'No Discord servers found. The bot must be installed in at least one server.\n' +
         `Install URL: ${installUrl}\n` +
         'Do not share this URL with anyone — it contains your credentials.\n' +
-        'Open the URL above to add the bot to a server, then run dori again.',
+        'Open the URL above to add the bot to a server, then run dorimaki again.',
     )
     void discordClient.destroy()
     process.exit(EXIT_NO_RESTART)
@@ -1875,8 +1875,8 @@ export async function run({
     // Never blocks ready state.
     void (async () => {
       try {
-        const backgroundChannels = await collectDoriChannels({ guilds })
-        await storeChannelDirectories({ doriChannels: backgroundChannels })
+        const backgroundChannels = await collectDorimakiChannels({ guilds })
+        await storeChannelDirectories({ dorimakiChannels: backgroundChannels })
         cliLogger.log(
           `Background channel sync completed for ${backgroundChannels.length} guild(s)`,
         )
@@ -1917,25 +1917,25 @@ export async function run({
   } else {
     // ── Channel setup flow ──
     // Store channel-directory mappings discovered during Discord login.
-    await storeChannelDirectories({ doriChannels })
+    await storeChannelDirectories({ dorimakiChannels })
 
     if (!hasConfiguredTextChannels) {
       note(
-        'No Dori project channels are configured yet. Opening project/channel setup.',
+        'No Dorimaki project channels are configured yet. Opening project/channel setup.',
         'Channel Setup',
       )
     }
 
-    if (doriChannels.length > 0) {
-      const channelList = doriChannels
+    if (dorimakiChannels.length > 0) {
+      const channelList = dorimakiChannels
         .flatMap(({ guild, channels }) =>
           channels.map((ch) => {
-            return `#${ch.name} in ${guild.name}: ${ch.doriDirectory}`
+            return `#${ch.name} in ${guild.name}: ${ch.dorimakiDirectory}`
           }),
         )
         .join('\n')
 
-      note(channelList, 'Existing Dori Channels')
+      note(channelList, 'Existing Dorimaki Channels')
     }
 
     // Wait for OpenCode, fetch projects, show prompts, create channels if needed
@@ -1982,10 +1982,10 @@ export async function run({
 
     cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
 
-    const existingDirs = doriChannels.flatMap(({ channels }) =>
+    const existingDirs = dorimakiChannels.flatMap(({ channels }) =>
       channels
-        .filter((ch) => ch.doriDirectory)
-        .map((ch) => ch.doriDirectory)
+        .filter((ch) => ch.dorimakiDirectory)
+        .map((ch) => ch.dorimakiDirectory)
         .filter(Boolean),
     )
 
@@ -2093,7 +2093,7 @@ export async function run({
       }
     }
 
-    // Create default dori channel for general-purpose tasks.
+    // Create default dorimaki channel for general-purpose tasks.
     // Only locally configured or gateway-authorized guilds are eligible.
     const defaultChannelResults = await ensureDefaultChannelsWithWelcome({
       guilds,
@@ -2151,7 +2151,7 @@ export async function run({
       guild_ids: guilds.map((g) => { return g.id }),
     })
   } else {
-    showReadyMessage({ doriChannels, createdChannels })
+    showReadyMessage({ dorimakiChannels, createdChannels })
     outro('✨ Bot ready! Listening for messages...')
   }
 }

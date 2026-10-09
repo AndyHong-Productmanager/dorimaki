@@ -1,5 +1,5 @@
 // Tests for Drizzle client initialization and schema migration.
-// Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears DORI_DB_URL).
+// Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears DORIMAKI_DB_URL).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -220,7 +220,7 @@ describe('getDb', () => {
   test('rebuilds thread_queue_items that still use queue_id as the primary key', async () => {
     await closeDb()
 
-    const previousDbUrl = process.env['DORI_DB_URL']
+    const previousDbUrl = process.env['DORIMAKI_DB_URL']
     const dbPath = path.join(
       process.cwd(),
       `tmp/test-db-legacy-queue-${crypto.randomUUID().slice(0, 8)}.db`,
@@ -248,7 +248,7 @@ describe('getDb', () => {
       `)
       client.close()
 
-      process.env['DORI_DB_URL'] = `file:${dbPath}`
+      process.env['DORIMAKI_DB_URL'] = `file:${dbPath}`
       await getDb()
 
       const rows = await listThreadQueueItems('thr-legacy-queue')
@@ -272,9 +272,9 @@ describe('getDb', () => {
     } finally {
       await closeDb()
       if (previousDbUrl === undefined) {
-        delete process.env['DORI_DB_URL']
+        delete process.env['DORIMAKI_DB_URL']
       } else {
-        process.env['DORI_DB_URL'] = previousDbUrl
+        process.env['DORIMAKI_DB_URL'] = previousDbUrl
       }
       for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
@@ -289,7 +289,7 @@ describe('getDb', () => {
   test('removes part_messages rows whose thread_sessions parent is gone', async () => {
     await closeDb()
 
-    const previousDbUrl = process.env['DORI_DB_URL']
+    const previousDbUrl = process.env['DORIMAKI_DB_URL']
     const dbPath = path.join(
       process.cwd(),
       `tmp/test-db-orphan-parts-${crypto.randomUUID().slice(0, 8)}.db`,
@@ -342,7 +342,7 @@ describe('getDb', () => {
       expect(Number(before.rows[0]?.n)).toBe(1)
       client.close()
 
-      process.env['DORI_DB_URL'] = `file:${dbPath}`
+      process.env['DORIMAKI_DB_URL'] = `file:${dbPath}`
       const db = await getDb()
       const remaining = await db.query.part_messages.findMany({
         columns: { part_id: true },
@@ -358,9 +358,9 @@ describe('getDb', () => {
     } finally {
       await closeDb()
       if (previousDbUrl === undefined) {
-        delete process.env['DORI_DB_URL']
+        delete process.env['DORIMAKI_DB_URL']
       } else {
-        process.env['DORI_DB_URL'] = previousDbUrl
+        process.env['DORIMAKI_DB_URL'] = previousDbUrl
       }
       for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
@@ -394,7 +394,7 @@ describe('getDb', () => {
   test('adds session_sleeps delivery columns on databases created before that schema', async () => {
     await closeDb()
 
-    const previousDbUrl = process.env['DORI_DB_URL']
+    const previousDbUrl = process.env['DORIMAKI_DB_URL']
     const dbPath = path.join(
       process.cwd(),
       `tmp/test-db-legacy-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
@@ -428,7 +428,7 @@ describe('getDb', () => {
       `)
       client.close()
 
-      process.env['DORI_DB_URL'] = `file:${dbPath}`
+      process.env['DORIMAKI_DB_URL'] = `file:${dbPath}`
       await getDb()
 
       const due = await getDueSessionSleeps({
@@ -454,9 +454,9 @@ describe('getDb', () => {
     } finally {
       await closeDb()
       if (previousDbUrl === undefined) {
-        delete process.env['DORI_DB_URL']
+        delete process.env['DORIMAKI_DB_URL']
       } else {
-        process.env['DORI_DB_URL'] = previousDbUrl
+        process.env['DORIMAKI_DB_URL'] = previousDbUrl
       }
       for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
@@ -471,7 +471,7 @@ describe('getDb', () => {
   test('rebuilds session_sleeps that still have posted_at from the intermediate schema', async () => {
     await closeDb()
 
-    const previousDbUrl = process.env['DORI_DB_URL']
+    const previousDbUrl = process.env['DORIMAKI_DB_URL']
     const dbPath = path.join(
       process.cwd(),
       `tmp/test-db-posted-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
@@ -518,7 +518,7 @@ describe('getDb', () => {
       `)
       client.close()
 
-      process.env['DORI_DB_URL'] = `file:${dbPath}`
+      process.env['DORIMAKI_DB_URL'] = `file:${dbPath}`
       await getDb()
 
       const due = await getDueSessionSleeps({
@@ -542,9 +542,9 @@ describe('getDb', () => {
     } finally {
       await closeDb()
       if (previousDbUrl === undefined) {
-        delete process.env['DORI_DB_URL']
+        delete process.env['DORIMAKI_DB_URL']
       } else {
-        process.env['DORI_DB_URL'] = previousDbUrl
+        process.env['DORIMAKI_DB_URL'] = previousDbUrl
       }
       for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
@@ -579,18 +579,18 @@ describe('getDb', () => {
   test('migrates fresh sqlite files through hrana', async () => {
     await closeDb()
 
-    const previousDbUrl = process.env['DORI_DB_URL']
-    const previousLockPort = process.env['DORI_LOCK_PORT']
+    const previousDbUrl = process.env['DORIMAKI_DB_URL']
+    const previousLockPort = process.env['DORIMAKI_LOCK_PORT']
     const dbPath = path.join(
       process.cwd(),
       `tmp/test-db-hrana-${crypto.randomUUID().slice(0, 8)}.db`,
     )
 
     try {
-      process.env['DORI_LOCK_PORT'] = String(chooseLockPort({ key: 'db-hrana-migration-test' }))
+      process.env['DORIMAKI_LOCK_PORT'] = String(chooseLockPort({ key: 'db-hrana-migration-test' }))
       const hranaResult = await startHranaServer({ dbPath })
       if (hranaResult instanceof Error) throw hranaResult
-      process.env['DORI_DB_URL'] = hranaResult
+      process.env['DORIMAKI_DB_URL'] = hranaResult
 
       const db = await getDb()
       const [created] = await db.insert(schema.bot_tokens)
@@ -606,14 +606,14 @@ describe('getDb', () => {
       await closeDb()
       await stopHranaServer()
       if (previousDbUrl === undefined) {
-        delete process.env['DORI_DB_URL']
+        delete process.env['DORIMAKI_DB_URL']
       } else {
-        process.env['DORI_DB_URL'] = previousDbUrl
+        process.env['DORIMAKI_DB_URL'] = previousDbUrl
       }
       if (previousLockPort === undefined) {
-        delete process.env['DORI_LOCK_PORT']
+        delete process.env['DORIMAKI_LOCK_PORT']
       } else {
-        process.env['DORI_LOCK_PORT'] = previousLockPort
+        process.env['DORIMAKI_LOCK_PORT'] = previousLockPort
       }
       for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
@@ -631,7 +631,7 @@ describe('getDb', () => {
 
     await createPendingWorkspace({
       threadId,
-      workspaceType: 'dori-worktree',
+      workspaceType: 'dorimaki-worktree',
       workspaceName: 'regression-workspace',
       projectDirectory: '/tmp/regression-project',
     })

@@ -59,7 +59,7 @@ test('fileBaseName strips directories on posix and windows paths', () => {
 test('formatCompactToolSummary indexes read, task, and bash inputs', () => {
   expect(formatCompactToolSummary({
     tool: 'read',
-    input: { filePath: '/Users/morse/Documents/GitHub/dorivoice/README.md', offset: 1 },
+    input: { filePath: '/Users/morse/Documents/GitHub/dorimakivoice/README.md', offset: 1 },
   })).toBe('README.md')
 
   expect(formatCompactToolSummary({
@@ -189,7 +189,7 @@ beforeAll(async () => {
     JSON.stringify(opencodeConfig, null, 2),
   )
 
-  // Start the shared opencode server via dori's server manager
+  // Start the shared opencode server via dorimaki's server manager
   const getClient = await initializeOpencodeForDirectory(
     directories.projectDirectory,
   )

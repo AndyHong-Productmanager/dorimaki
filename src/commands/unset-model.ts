@@ -18,7 +18,7 @@ import { getDb } from '../db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getDoriMetadata } from '../discord-utils.js'
+import { resolveTextChannel, getDorimakiMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { formatModelSource, getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -49,12 +49,12 @@ export async function clearModelOverride({
 
   if (isThread) {
     const textChannel = await resolveTextChannel(channel)
-    const metadata = await getDoriMetadata(textChannel)
+    const metadata = await getDorimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = textChannel?.id || channel.id
     sessionId = await getThreadSession(channel.id)
   } else if (channel.type === ChannelType.GuildText) {
-    const metadata = await getDoriMetadata(channel)
+    const metadata = await getDorimakiMetadata(channel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = channel.id
   } else {

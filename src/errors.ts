@@ -27,7 +27,7 @@ export class ServerNotReadyError extends errore.createTaggedError({
 export class OpencodeIncompatibleVersionError extends errore.createTaggedError({
   name: 'OpencodeIncompatibleVersionError',
   message:
-    'Dori is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
+    'Dorimaki is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
 }) {}
 
 export class ApiKeyMissingError extends errore.createTaggedError({

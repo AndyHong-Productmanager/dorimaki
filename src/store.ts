@@ -34,10 +34,10 @@ export type DeterministicTranscriptionConfig = {
   delayMs?: number
 }
 
-export type DoriState = {
+export type DorimakiState = {
   // ── Config state (set once at CLI startup, read everywhere) ──────────
 
-  // Path to the dori data directory (default ~/.dori).
+  // Path to the dorimaki data directory (default ~/.dorimaki).
   // Changes: set once at startup by setDataDir() or auto-created on first
   // getDataDir() call. Under vitest, auto-creates a temp dir.
   // Read by: database paths, heap snapshot dir, log file path, hrana server.
@@ -45,7 +45,7 @@ export type DoriState = {
 
   // Custom projects directory override (default: <dataDir>/projects).
   // When set via --projects-dir CLI flag, project create commands will
-  // create new project folders here instead of ~/.dori/projects/.
+  // create new project folders here instead of ~/.dorimaki/projects/.
   // Changes: set once at startup from --projects-dir CLI flag.
   // Read by: config.ts getProjectsDir().
   projectsDir: string | null
@@ -96,16 +96,16 @@ export type DoriState = {
   allowedMentions: Array<'users' | 'roles' | 'everyone'>
 
   // When true, all Discord users can start sessions and use commands without
-  // needing the Dori role, Administrator, Manage Server, or being the owner.
-  // The "no-dori" role still blocks access even when this is enabled.
+  // needing the Dorimaki role, Administrator, Manage Server, or being the owner.
+  // The "no-dorimaki" role still blocks access even when this is enabled.
   // Changes: set once at startup from --allow-all-users CLI flag.
-  // Read by: discord-utils.ts hasDoriBotPermission().
+  // Read by: discord-utils.ts hasDorimakiBotPermission().
   allowAllUsers: boolean
 
   // Hostname passed to `opencode serve --hostname`. Null means OpenCode's
-  // default (127.0.0.1). Set from --opencode-hostname. Dori still talks
+  // default (127.0.0.1). Set from --opencode-hostname. Dorimaki still talks
   // to 127.0.0.1 even when the server binds 0.0.0.0. Does not bind the
-  // Dori hrana/lock server.
+  // Dorimaki hrana/lock server.
   // Changes: set once at startup from --opencode-hostname CLI flag.
   // Read by: opencode.ts startSingleServer().
   opencodeHostname: string | null
@@ -133,11 +133,11 @@ export type DoriState = {
   // Read by: commands/permissions.ts showPermissionButtons().
   permissionTimeoutMs: number
 
-  // Whether background auto-upgrade of dori is enabled on startup.
-  // When true (default), dori checks npm for a newer version and installs
+  // Whether background auto-upgrade of dorimaki is enabled on startup.
+  // When true (default), dorimaki checks npm for a newer version and installs
   // it in the background. Set to false via --no-auto-upgrade CLI flag.
   // Changes: set once at startup.
-  // Read by: cli-runner.ts run() before calling backgroundUpgradeDori().
+  // Read by: cli-runner.ts run() before calling backgroundUpgradeDorimaki().
   autoUpgradeEnabled: boolean
 
   // When true, all new sessions from channel messages create git worktrees.
@@ -164,7 +164,7 @@ export type DoriState = {
   discordBaseUrl: string
 
   // Service auth token (client_id:client_secret) used to authenticate
-  // control-plane requests like /dori/wake. Always set at startup in all
+  // control-plane requests like /dorimaki/wake. Always set at startup in all
   // modes so localhost and internet paths share one auth model.
   // Changes: set in cli.ts after credential resolution and persisted in sqlite.
   // Read by: hrana-server.ts to validate Authorization bearer token.
@@ -198,7 +198,7 @@ export type DoriState = {
   }
 }
 
-export const store = createStore<DoriState>(() => ({
+export const store = createStore<DorimakiState>(() => ({
   dataDir: null,
   projectsDir: null,
   defaultVerbosity: 'text_and_essential_tools',

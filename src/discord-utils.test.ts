@@ -1,8 +1,8 @@
 import { PermissionsBitField, type Message } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
-  hasDoriAdminPermission,
-  hasDoriBotPermission,
+  hasDorimakiAdminPermission,
+  hasDorimakiBotPermission,
   raceDiscordRename,
   resolveFooterMentionUserId,
   resolveGuildMessageMember,
@@ -110,7 +110,7 @@ describe('splitMarkdownForDiscord', () => {
   })
 })
 
-describe('hasDoriBotPermission', () => {
+describe('hasDorimakiBotPermission', () => {
   afterEach(() => {
     store.setState({ allowAllUsers: false })
   })
@@ -128,17 +128,17 @@ describe('hasDoriBotPermission', () => {
       roles: [],
     } as any
 
-    expect(hasDoriBotPermission(member, guild)).toBe(true)
+    expect(hasDorimakiBotPermission(member, guild)).toBe(true)
   })
 
-  test('still blocks no-dori role even when allowAllUsers is enabled', () => {
+  test('still blocks no-dorimaki role even when allowAllUsers is enabled', () => {
     store.setState({ allowAllUsers: true })
-    const noDoriRoleId = '222'
+    const noDorimakiRoleId = '222'
     const guild = {
       ownerId: 'owner-id',
       roles: {
         cache: new Map([
-          [noDoriRoleId, { id: noDoriRoleId, name: 'no-dori' }],
+          [noDorimakiRoleId, { id: noDorimakiRoleId, name: 'no-dorimaki' }],
         ]),
       },
     } as any
@@ -146,19 +146,19 @@ describe('hasDoriBotPermission', () => {
     const member = {
       user: { id: 'member-id' },
       permissions: '0',
-      roles: [noDoriRoleId],
+      roles: [noDorimakiRoleId],
     } as any
 
-    expect(hasDoriBotPermission(member, guild)).toBe(false)
+    expect(hasDorimakiBotPermission(member, guild)).toBe(false)
   })
 
-  test('allows API interaction member when dori role exists', () => {
-    const doriRoleId = '111'
+  test('allows API interaction member when dorimaki role exists', () => {
+    const dorimakiRoleId = '111'
     const guild = {
       ownerId: 'owner-id',
       roles: {
         cache: new Map([
-          [doriRoleId, { id: doriRoleId, name: 'Dori' }],
+          [dorimakiRoleId, { id: dorimakiRoleId, name: 'Dorimaki' }],
         ]),
       },
     } as any
@@ -166,10 +166,10 @@ describe('hasDoriBotPermission', () => {
     const member = {
       user: { id: 'member-id' },
       permissions: '0',
-      roles: [doriRoleId],
+      roles: [dorimakiRoleId],
     } as any
 
-    expect(hasDoriBotPermission(member, guild)).toBe(true)
+    expect(hasDorimakiBotPermission(member, guild)).toBe(true)
   })
 
   test('allows API interaction member with ManageGuild permission', () => {
@@ -184,7 +184,7 @@ describe('hasDoriBotPermission', () => {
       roles: [],
     } as any
 
-    expect(hasDoriBotPermission(member, guild)).toBe(true)
+    expect(hasDorimakiBotPermission(member, guild)).toBe(true)
   })
 
   test('denies API interaction member with no role, owner, or admin rights', () => {
@@ -199,11 +199,11 @@ describe('hasDoriBotPermission', () => {
       roles: [],
     } as any
 
-    expect(hasDoriBotPermission(member, guild)).toBe(false)
+    expect(hasDorimakiBotPermission(member, guild)).toBe(false)
   })
 })
 
-describe('hasDoriAdminPermission', () => {
+describe('hasDorimakiAdminPermission', () => {
   afterEach(() => {
     store.setState({ allowAllUsers: false })
   })
@@ -221,7 +221,7 @@ describe('hasDoriAdminPermission', () => {
       roles: [],
     } as any
 
-    expect(hasDoriAdminPermission(member, guild)).toBe(false)
+    expect(hasDorimakiAdminPermission(member, guild)).toBe(false)
   })
 
   test('allows admin even when allowAllUsers is enabled', () => {
@@ -237,7 +237,7 @@ describe('hasDoriAdminPermission', () => {
       roles: [],
     } as any
 
-    expect(hasDoriAdminPermission(member, guild)).toBe(true)
+    expect(hasDorimakiAdminPermission(member, guild)).toBe(true)
   })
 })
 

@@ -55,20 +55,20 @@ export async function buildThreadStartEmbeds(marker: ThreadStartMarker) {
 }
 
 /**
- * Centralized permission check for Dori bot access.
+ * Centralized permission check for Dorimaki bot access.
  * Returns true if the member has permission to use the bot:
- * - Server owner, Administrator, Manage Server, or "Dori" role (case-insensitive).
- * Returns false if member is null or has the "no-dori" role (overrides all).
+ * - Server owner, Administrator, Manage Server, or "Dorimaki" role (case-insensitive).
+ * Returns false if member is null or has the "no-dorimaki" role (overrides all).
  */
-export function hasDoriBotPermission(
+export function hasDorimakiBotPermission(
   member: GuildMemberType | APIInteractionGuildMember | null,
   guild?: Guild | null,
 ): boolean {
   if (!member) {
     return false
   }
-  const hasNoDoriRole = hasRoleByName(member, 'no-dori', guild)
-  if (hasNoDoriRole) {
+  const hasNoDorimakiRole = hasRoleByName(member, 'no-dorimaki', guild)
+  if (hasNoDorimakiRole) {
     return false
   }
   if (store.getState().allowAllUsers) {
@@ -83,25 +83,25 @@ export function hasDoriBotPermission(
   const isOwner = ownerId ? memberId === ownerId : false
   const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
   const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
-  const hasDoriRole = hasRoleByName(member, 'dori', guild)
-  return isOwner || isAdmin || canManageServer || hasDoriRole
+  const hasDorimakiRole = hasRoleByName(member, 'dorimaki', guild)
+  return isOwner || isAdmin || canManageServer || hasDorimakiRole
 }
 
 /**
  * Stricter permission check that ignores allowAllUsers.
  * Use for admin-only commands like /login and /transcription-key that
  * configure shared credentials. Always requires owner, admin, manage
- * server, or Dori role regardless of --allow-all-users flag.
+ * server, or Dorimaki role regardless of --allow-all-users flag.
  */
-export function hasDoriAdminPermission(
+export function hasDorimakiAdminPermission(
   member: GuildMemberType | APIInteractionGuildMember | null,
   guild?: Guild | null,
 ): boolean {
   if (!member) {
     return false
   }
-  const hasNoDori = hasRoleByName(member, 'no-dori', guild)
-  if (hasNoDori) {
+  const hasNoDorimaki = hasRoleByName(member, 'no-dorimaki', guild)
+  if (hasNoDorimaki) {
     return false
   }
   const memberPermissions =
@@ -113,8 +113,8 @@ export function hasDoriAdminPermission(
   const isOwner = ownerId ? memberId === ownerId : false
   const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
   const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
-  const hasDoriRole = hasRoleByName(member, 'dori', guild)
-  return isOwner || isAdmin || canManageServer || hasDoriRole
+  const hasDorimakiRole = hasRoleByName(member, 'dorimaki', guild)
+  return isOwner || isAdmin || canManageServer || hasDorimakiRole
 }
 
 export async function resolveGuildMessageMember(
@@ -162,15 +162,15 @@ function hasRoleByName(
 }
 
 /**
- * Check if the member has the "no-dori" role that blocks bot access.
- * Separate from hasDoriBotPermission so callers can show a specific error message.
+ * Check if the member has the "no-dorimaki" role that blocks bot access.
+ * Separate from hasDorimakiBotPermission so callers can show a specific error message.
  */
-export function hasNoDoriRole(member: GuildMemberType | null): boolean {
+export function hasNoDorimakiRole(member: GuildMemberType | null): boolean {
   if (!member?.roles?.cache) {
     return false
   }
   return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-dori',
+    (role) => role.name.toLowerCase() === 'no-dorimaki',
   )
 }
 
@@ -882,7 +882,7 @@ export function escapeDiscordFormatting(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`')
 }
 
-export async function getDoriMetadata(
+export async function getDorimakiMetadata(
   textChannel: TextChannel | null,
 ): Promise<{
   projectDirectory?: string
@@ -980,7 +980,7 @@ export async function resolveWorkingDirectory({
     ? await resolveTextChannel(channel as ThreadChannel)
     : (channel as TextChannel)
 
-  const metadata = await getDoriMetadata(textChannel)
+  const metadata = await getDorimakiMetadata(textChannel)
   if (!metadata.projectDirectory) {
     return undefined
   }

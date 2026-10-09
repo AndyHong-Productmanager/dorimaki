@@ -1,4 +1,4 @@
-// Scheduled task parsing for `send --send-at`, plus dori_sleep wake/result text.
+// Scheduled task parsing for `send --send-at`, plus dorimaki_sleep wake/result text.
 
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
@@ -213,7 +213,7 @@ export function formatSessionSleepToolOutput({
     'This tool result is not a wake. Do not continue the waited work. Do not call more tools.',
     'Reply with one short line that you are waiting until that time, then stop.',
     'The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason.',
-    'A new user message in this thread cancels the sleep. If you still need that later wake after answering, call dori_sleep again with until set to the same UTC time.',
+    'A new user message in this thread cancels the sleep. If you still need that later wake after answering, call dorimaki_sleep again with until set to the same UTC time.',
   ].join(' ')
 }
 

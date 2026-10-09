@@ -3,7 +3,7 @@
 // - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
 // - MEMORY.md reminder after a large assistant reply
 // - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
-// - Missing dori system prompt on session.command user messages
+// - Missing dorimaki system prompt on session.command user messages
 //
 // Synthetic parts are hidden from the TUI but sent to the model, keeping it
 // aware of context changes without cluttering the UI.
@@ -13,7 +13,7 @@
 // Decision logic is extracted into pure functions that take state + input
 // and return whether to inject — making them testable without mocking.
 //
-// Exported from dori-opencode-plugin.ts — each export is treated as a separate
+// Exported from dorimaki-opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'
@@ -287,7 +287,7 @@ async function resolveSessionDirectory({
 const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
   initSentry()
 
-  const dataDir = process.env.DORI_DATA_DIR
+  const dataDir = process.env.DORIMAKI_DATA_DIR
   if (dataDir) {
     setDataDir(dataDir)
     setPluginLogFilePath(dataDir)
@@ -327,11 +327,11 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
 
           // -- System prompt for session.command path --
           // OpenCode's session.command API has no `system` field. The bot
-          // writes the dori system prompt to disk before calling command;
+          // writes the dorimaki system prompt to disk before calling command;
           // attach it here when the user message would otherwise miss it.
           // promptAsync already sets message.system, so leave those alone.
           // Only ENOENT is treated as missing; other I/O errors propagate so
-          // we do not silently drop dori system context.
+          // we do not silently drop dorimaki system context.
           if (!output.message.system && dataDir) {
             const persistedSystem = await readSessionSystemPrompt({
               sessionId: sessionID,
@@ -398,7 +398,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
             sessionID,
             state,
           })
-          // The plugin request directory is the current directory Dori asked
+          // The plugin request directory is the current directory Dorimaki asked
           // OpenCode to operate on for this message. Prefer it over session.get()
           // when they disagree so reminders and MEMORY/branch context follow the
           // new worktree immediately after a folder switch.

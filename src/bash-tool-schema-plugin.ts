@@ -4,16 +4,16 @@
 // args before execute. Extra fields stay in the model-facing schema and in
 // Discord input; they never reach the shell.
 //
-// Also injects DORI_SESSION_ID into bash env. /btw and /fork clone parent
+// Also injects DORIMAKI_SESSION_ID into bash env. /btw and /fork clone parent
 // history, so the copied system prompt still says --session <parent>. Upload
 // then prefers this live env over that stale flag.
 
 import type { Plugin } from '@opencode-ai/plugin'
 import { z } from 'zod'
 
-export const DORI_SESSION_ID_ENV = 'DORI_SESSION_ID'
+export const DORIMAKI_SESSION_ID_ENV = 'DORIMAKI_SESSION_ID'
 
-export function injectDoriSessionEnv({
+export function injectDorimakiSessionEnv({
   sessionID,
   env,
 }: {
@@ -21,12 +21,12 @@ export function injectDoriSessionEnv({
   env: Record<string, string>
 }) {
   if (!sessionID) return
-  env[DORI_SESSION_ID_ENV] = sessionID
+  env[DORIMAKI_SESSION_ID_ENV] = sessionID
 }
 
 export function resolveUploadToDiscordSessionId({
   flagSessionId,
-  envSessionId = process.env[DORI_SESSION_ID_ENV],
+  envSessionId = process.env[DORIMAKI_SESSION_ID_ENV],
 }: {
   flagSessionId?: string
   envSessionId?: string
@@ -71,7 +71,7 @@ export const bashToolSchemaPlugin: Plugin = async () => {
       extendBashToolDefinition(output)
     },
     'shell.env': async (input, output) => {
-      injectDoriSessionEnv({ sessionID: input.sessionID, env: output.env })
+      injectDorimakiSessionEnv({ sessionID: input.sessionID, env: output.env })
     },
   }
 }

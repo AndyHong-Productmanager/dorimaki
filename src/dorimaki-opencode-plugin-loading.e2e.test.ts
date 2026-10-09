@@ -1,5 +1,5 @@
 // E2e test for OpenCode plugin loading.
-// Spawns one `opencode serve` with the same plugin list dori writes (its own
+// Spawns one `opencode serve` with the same plugin list dorimaki writes (its own
 // plugin plus @subrouter/opencode), then checks stderr for load errors and
 // hits the real HTTP API. One server for both plugins, because that is how
 // they actually run, and because booting two costs seconds per file.
@@ -50,7 +50,7 @@ beforeAll(async () => {
   fs.rmSync(projectDir, { recursive: true, force: true })
   const opencodeRoot = path.join(projectDir, 'opencode-test-home')
   const xdgDirectories = {
-    OPENCODE_CONFIG_DIR: path.join(opencodeRoot, '.opencode-dori'),
+    OPENCODE_CONFIG_DIR: path.join(opencodeRoot, '.opencode-dorimaki'),
     XDG_CONFIG_HOME: path.join(opencodeRoot, '.config'),
     XDG_DATA_HOME: path.join(opencodeRoot, '.local', 'share'),
     XDG_CACHE_HOME: path.join(opencodeRoot, '.cache'),
@@ -76,7 +76,7 @@ beforeAll(async () => {
         lsp: false,
         formatter: false,
         plugin: [
-          new URL('../src/dori-opencode-plugin.ts', import.meta.url).href,
+          new URL('../src/dorimaki-opencode-plugin.ts', import.meta.url).href,
           pathToFileURL(require.resolve('@subrouter/opencode')).href,
         ],
       }),

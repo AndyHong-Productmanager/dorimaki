@@ -1,5 +1,5 @@
 // Action button tool handler - Shows Discord buttons for quick model actions.
-// Used by the dori_action_buttons tool to render up to 3 buttons and route
+// Used by the dorimaki_action_buttons tool to render up to 3 buttons and route
 // button clicks back into the session as a new user message.
 
 import {

@@ -114,7 +114,7 @@ import {
   handleVariantQuickSelectMenu,
   handleVariantScopeSelectMenu,
 } from './commands/model-variant.js'
-import { hasDoriAdminPermission, hasDoriBotPermission } from './discord-utils.js'
+import { hasDorimakiAdminPermission, hasDorimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory } from './database.js'
@@ -223,7 +223,7 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isAutocomplete()) {
-          if (!hasDoriBotPermission(interaction.member, interaction.guild)) {
+          if (!hasDorimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.respond([])
             return
           }
@@ -275,9 +275,9 @@ export function registerInteractionHandler({
             `[COMMAND] Processing: ${interaction.commandName}`,
           )
 
-          if (!hasDoriBotPermission(interaction.member, interaction.guild)) {
+          if (!hasDorimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
-              content: `You don't have permission to use this command.\nTo use Dori, ask a server admin to give you the **Dori** role.`,
+              content: `You don't have permission to use this command.\nTo use Dorimaki, ask a server admin to give you the **Dorimaki** role.`,
               flags: MessageFlags.Ephemeral,
             })
             return
@@ -374,9 +374,9 @@ export function registerInteractionHandler({
               return
 
             case 'login':
-              if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+              if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
                 await interaction.reply({
-                  content: `Only server admins or users with the **Dori** role can configure login credentials.`,
+                  content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
                   flags: MessageFlags.Ephemeral,
                 })
                 return
@@ -441,9 +441,9 @@ export function registerInteractionHandler({
               return
 
             case 'transcription-key':
-              if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+              if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
                 await interaction.reply({
-                  content: `Only server admins or users with the **Dori** role can configure API keys.`,
+                  content: `Only server admins or users with the **Dorimaki** role can configure API keys.`,
                   flags: MessageFlags.Ephemeral,
                 })
                 return
@@ -489,9 +489,9 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isButton()) {
-          if (!hasDoriBotPermission(interaction.member, interaction.guild)) {
+          if (!hasDorimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
-              content: `You don't have permission to use this.\nTo use Dori, ask a server admin to give you the **Dori** role.`,
+              content: `You don't have permission to use this.\nTo use Dorimaki, ask a server admin to give you the **Dorimaki** role.`,
               flags: MessageFlags.Ephemeral,
             })
             return
@@ -500,9 +500,9 @@ export function registerInteractionHandler({
           const customId = interaction.customId
 
           if (customId.startsWith('transcription_apikey:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure API keys.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure API keys.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -526,9 +526,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_text_btn:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure login credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -538,9 +538,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_apikey_btn:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure login credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -550,9 +550,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_oauth_code_btn:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure login credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -580,9 +580,9 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isStringSelectMenu()) {
-          if (!hasDoriBotPermission(interaction.member, interaction.guild)) {
+          if (!hasDorimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
-              content: `You don't have permission to use this.\nTo use Dori, ask a server admin to give you the **Dori** role.`,
+              content: `You don't have permission to use this.\nTo use Dorimaki, ask a server admin to give you the **Dorimaki** role.`,
               flags: MessageFlags.Ephemeral,
             })
             return
@@ -651,9 +651,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_select:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure login credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -665,9 +665,9 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isModalSubmit()) {
-          if (!hasDoriBotPermission(interaction.member, interaction.guild)) {
+          if (!hasDorimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
-              content: `You don't have permission to use this.\nTo use Dori, ask a server admin to give you the **Dori** role.`,
+              content: `You don't have permission to use this.\nTo use Dorimaki, ask a server admin to give you the **Dorimaki** role.`,
               flags: MessageFlags.Ephemeral,
             })
             return
@@ -676,9 +676,9 @@ export function registerInteractionHandler({
           const customId = interaction.customId
 
           if (customId.startsWith('login_apikey:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -688,9 +688,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_text:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -700,9 +700,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_oauth_code:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
@@ -712,9 +712,9 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('transcription_apikey_modal:')) {
-            if (!hasDoriAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
-                content: `Only server admins or users with the **Dori** role can configure credentials.`,
+                content: `Only server admins or users with the **Dorimaki** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Main CLI entrypoint for the Dori Discord bot.
+// Main CLI entrypoint for the Dorimaki Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
 import { goke } from 'goke'
@@ -34,13 +34,13 @@ import {
 } from './cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
-const cli = goke('dori')
+const cli = goke('dorimaki')
 cli.use(multioauthCommands)
 
-process.title = 'dori'
+process.title = 'dorimaki'
 
 cli
-  .command('', 'Set up and run the Dori Discord bot')
+  .command('', 'Set up and run the Dorimaki Discord bot')
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
@@ -48,7 +48,7 @@ cli
   )
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.dori)',
+    'Data directory for config and database (default: ~/.dorimaki)',
   )
   .option(
     '--projects-dir <path>',
@@ -85,7 +85,7 @@ cli
   )
   .option(
     '--allow-all-users',
-    'Allow all Discord users to start sessions without needing Dori role or admin permissions (no-dori role still blocks)',
+    'Allow all Discord users to start sessions without needing Dorimaki role or admin permissions (no-dorimaki role still blocks)',
   )
   .option(
     '--restrict-directories',
@@ -101,7 +101,7 @@ cli
   )
   .option(
     '--no-analytics',
-    'Disable anonymous product analytics (Strada). Same as DORI_STRADA_ENABLED=0',
+    'Disable anonymous product analytics (Strada). Same as DORIMAKI_STRADA_ENABLED=0',
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
@@ -114,7 +114,7 @@ cli
   )
   .option(
     '--gateway',
-    'Force gateway mode (use the gateway Dori bot instead of a self-hosted bot)',
+    'Force gateway mode (use the gateway Dorimaki bot instead of a self-hosted bot)',
   )
   .option(
     '--gateway-callback-url <url>',
@@ -135,7 +135,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Whitelist a built-in skill by name. Only the listed skills are injected into the model (all others are hidden via an opencode permission.skill deny-all rule). Repeatable: pass --enable-skill multiple times. Mutually exclusive with --disable-skill. See https://github.com/remorses/dori/tree/main/skills for available skills.',
+        'Whitelist a built-in skill by name. Only the listed skills are injected into the model (all others are hidden via an opencode permission.skill deny-all rule). Repeatable: pass --enable-skill multiple times. Mutually exclusive with --disable-skill. See https://github.com/remorses/dorimaki/tree/main/skills for available skills.',
       ),
   )
   .option(
@@ -144,7 +144,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/dori/tree/main/skills for available skills.',
+        'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/dorimaki/tree/main/skills for available skills.',
       ),
   )
   .action(
@@ -175,24 +175,24 @@ cli
       opencodeHostname?: string
       opencodePort?: string
     }) => {
-      // Guard: only one dori bot process can run per lock port. Agents may run
+      // Guard: only one dorimaki bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
-      const parentLockPort = process.env.DORI_PARENT_LOCK_PORT
-      const currentLockPort = process.env.DORI_LOCK_PORT
+      const parentLockPort = process.env.DORIMAKI_PARENT_LOCK_PORT
+      const currentLockPort = process.env.DORIMAKI_LOCK_PORT
       const usesDifferentLockPort = currentLockPort !== parentLockPort
 
-      if (process.env.DORI_OPENCODE_PROCESS && !usesDifferentLockPort) {
+      if (process.env.DORIMAKI_OPENCODE_PROCESS && !usesDifferentLockPort) {
         cliLogger.error(
-          'Cannot run `dori` inside an OpenCode session — it would kill the already-running bot process.\n' +
-          'Only one dori bot can run at a time (they share a lock port).\n' +
-          'Set DORI_LOCK_PORT to a different port for an isolated dev process, or use `dori send`, `dori session`, and other subcommands instead.',
+          'Cannot run `dorimaki` inside an OpenCode session — it would kill the already-running bot process.\n' +
+          'Only one dorimaki bot can run at a time (they share a lock port).\n' +
+          'Set DORIMAKI_LOCK_PORT to a different port for an isolated dev process, or use `dorimaki send`, `dorimaki session`, and other subcommands instead.',
         )
         process.exit(EXIT_NO_RESTART)
       }
 
-      if (process.env.DORI_OPENCODE_PROCESS && usesDifferentLockPort) {
-        delete process.env['DORI_DB_URL']
-        delete process.env['DORI_DB_AUTH_TOKEN']
+      if (process.env.DORIMAKI_OPENCODE_PROCESS && usesDifferentLockPort) {
+        delete process.env['DORIMAKI_DB_URL']
+        delete process.env['DORIMAKI_DB_AUTH_TOKEN']
       }
 
       try {
@@ -207,7 +207,7 @@ cli
           cliLogger.log(`Using projects directory: ${getProjectsDir()}`)
         }
 
-        // Initialize file logging to <dataDir>/dori.log
+        // Initialize file logging to <dataDir>/dorimaki.log
         initLogFile(getDataDir())
 
         // Batch all CLI flag store updates into a single setState call.
@@ -265,7 +265,7 @@ cli
           for (const name of [...enabledSkills, ...disabledSkills]) {
             if (!availableSet.has(name)) {
               cliLogger.warn(
-                `Skill "${name}" is not a bundled dori skill. Rule will still apply (user-provided skills from .opencode/.claude/.agents dirs may match). Available bundled skills: ${availableBundledSkills.join(', ')}`,
+                `Skill "${name}" is not a bundled dorimaki skill. Rule will still apply (user-provided skills from .opencode/.claude/.agents dirs may match). Available bundled skills: ${availableBundledSkills.join(', ')}`,
               )
             }
           }
@@ -341,7 +341,7 @@ cli
 
         if (options.allowAllUsers) {
           cliLogger.log(
-            'Allow all users: any Discord member can start sessions (no-dori role still blocks)',
+            'Allow all users: any Discord member can start sessions (no-dorimaki role still blocks)',
           )
         }
         if (options.restrictDirectories) {
@@ -373,7 +373,7 @@ cli
         }
         if (options.noAutoUpgrade) {
           cliLogger.log(
-            'Auto-upgrade disabled: dori will not check for updates on startup',
+            'Auto-upgrade disabled: dorimaki will not check for updates on startup',
           )
         }
         if (options.disableSync) {
@@ -382,7 +382,7 @@ cli
           )
         }
         if (options.noAnalytics) {
-          process.env.DORI_STRADA_ENABLED = '0'
+          process.env.DORIMAKI_STRADA_ENABLED = '0'
           cliLogger.log(
             'Anonymous product analytics disabled (--no-analytics)',
           )

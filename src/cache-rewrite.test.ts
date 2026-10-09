@@ -24,7 +24,7 @@ test('counts added and removed system prompt lines', () => {
 })
 
 test('writes a unified patch only for the caller', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dori-cache-rewrite-'))
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-cache-rewrite-'))
   tempDirs.push(dataDir)
   const filePath = await writeSystemPromptPatch({
     dataDir,

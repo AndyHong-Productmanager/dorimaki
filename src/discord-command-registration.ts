@@ -241,13 +241,13 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('add-project')
       .setDescription(
-        truncateCommandDescription('Create Discord channels for a project. Use `npx dori project add` for unlisted projects'),
+        truncateCommandDescription('Create Discord channels for a project. Use `npx dorimaki project add` for unlisted projects'),
       )
       .addStringOption((option) => {
         option
           .setName('project')
           .setDescription(
-            truncateCommandDescription('Recent OpenCode projects. Use `npx dori project add` if not listed'),
+            truncateCommandDescription('Recent OpenCode projects. Use `npx dorimaki project add` if not listed'),
           )
           .setRequired(true)
           .setAutocomplete(true)
@@ -468,7 +468,7 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('upgrade-and-restart')
       .setDescription(
-        truncateCommandDescription('Upgrade dori to the latest version and restart the bot'),
+        truncateCommandDescription('Upgrade dorimaki to the latest version and restart the bot'),
       )
       .setDMPermission(false)
       .toJSON(),

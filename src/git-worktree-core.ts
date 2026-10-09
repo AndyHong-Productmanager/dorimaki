@@ -1,8 +1,8 @@
 // Plugin-safe Git worktree creation, identity validation, and removal primitives.
 // This module must NOT import config.ts, logger.ts, or any module that
 // transitively pulls them in. It is used by both:
-//   - worktrees.ts (bot process — wraps with dori logger + config)
-//   - dori-workspace-adaptor.ts (opencode server process — silent callbacks)
+//   - worktrees.ts (bot process — wraps with dorimaki logger + config)
+//   - dorimaki-workspace-adaptor.ts (opencode server process — silent callbacks)
 //
 // All logging goes through an optional `log` callback so callers control output.
 
@@ -28,7 +28,7 @@ export type WorktreeLog = {
   error(message: string): void
 }
 
-export const DORI_WORKTREE_ADAPTER_TYPE = 'dori-worktree'
+export const DORIMAKI_WORKTREE_ADAPTER_TYPE = 'dorimaki-worktree'
 
 export class WorktreeIdentityError extends errore.createTaggedError({
   name: 'WorktreeIdentityError',

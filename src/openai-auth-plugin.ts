@@ -12,7 +12,7 @@
  * 2. Rotate accounts on rate-limit retry events
  * 3. Show toast notifications when rotating
  *
- * Account management is done via `dori multioauth openai` CLI commands.
+ * Account management is done via `dorimaki multioauth openai` CLI commands.
  */
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
@@ -27,7 +27,7 @@ import {
 } from './openai-auth-state.js'
 
 const log = createPluginLogger('openai-rotation')
-const TOAST_SESSION_HEADER = 'x-dori-session-id'
+const TOAST_SESSION_HEADER = 'x-dorimaki-session-id'
 
 // --- Event shape guards ---
 

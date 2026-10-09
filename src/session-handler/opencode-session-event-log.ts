@@ -13,7 +13,7 @@ let eventLogDirPromise: Promise<string> | null = null
 let eventLogWriteDisabled = false
 
 export function isOpencodeSessionEventLogEnabled(): boolean {
-  return process.env['DORI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
+  return process.env['DORIMAKI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
 }
 
 function sessionIdFromEventProperties(properties: OpenCodeEvent['properties']): string | undefined {
@@ -81,7 +81,7 @@ function sanitizeSessionIdForFilename(sessionId: string): string {
 async function resolveEventLogDirectory(): Promise<string> {
   if (!eventLogDirPromise) {
     eventLogDirPromise = (async () => {
-      const configuredEventLogDir = process.env['DORI_OPENCODE_SESSION_EVENTS_DIR']
+      const configuredEventLogDir = process.env['DORIMAKI_OPENCODE_SESSION_EVENTS_DIR']
       const baseDir = configuredEventLogDir || path.join(getDataDir(), 'opencode-session-events')
       await fs.promises.mkdir(baseDir, { recursive: true })
       return baseDir

@@ -1,5 +1,5 @@
 // Tool definition to Google GenAI tool converter.
-// Transforms Dori's minimal Tool definitions into Google GenAI CallableTool format
+// Transforms Dorimaki's minimal Tool definitions into Google GenAI CallableTool format
 // for use with Gemini's function calling in the voice assistant.
 
 import type { AnyTool } from './ai-tool.js'

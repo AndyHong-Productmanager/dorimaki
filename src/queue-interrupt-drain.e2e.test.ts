@@ -4,7 +4,7 @@
 //
 // Expected behavior:
 //   1. Slow session is running
-//   2. User queues a message via /queue (enters dori local queue)
+//   2. User queues a message via /queue (enters dorimaki local queue)
 //   3. User sends a normal message (interrupt)
 //   4. Session aborts the slow task, processes the interrupt message immediately
 //   5. Interrupt response appears in Discord with a ok reply

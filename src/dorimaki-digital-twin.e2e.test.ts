@@ -1,4 +1,4 @@
-// End-to-end test using discord-digital-twin + real Dori bot runtime.
+// End-to-end test using discord-digital-twin + real Dorimaki bot runtime.
 // Verifies onboarding channel creation, message -> thread creation, and assistant reply.
 
 import fs from 'node:fs'
@@ -27,7 +27,7 @@ const geminiModel = process.env['GEMINI_FLASH_MODEL'] || 'gemini-2.5-flash'
 const e2eTest = geminiApiKey.length > 0 ? test : test.skip
 
 function createRunDirectories() {
-  const root = path.resolve(process.cwd(), 'tmp', 'dori-digital-twin-e2e')
+  const root = path.resolve(process.cwd(), 'tmp', 'dorimaki-digital-twin-e2e')
   fs.mkdirSync(root, { recursive: true })
 
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
@@ -70,9 +70,9 @@ e2eTest(
   async () => {
     const testStartTime = Date.now()
     const directories = createRunDirectories()
-    const lockPort = chooseLockPort({ key: 'dori-digital-twin-e2e' })
+    const lockPort = chooseLockPort({ key: 'dorimaki-digital-twin-e2e' })
 
-    process.env['DORI_LOCK_PORT'] = String(lockPort)
+    process.env['DORIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
 
     const proxy = new CachedOpencodeProviderProxy({
@@ -90,13 +90,13 @@ e2eTest(
     )
     const discord = new DigitalDiscord({
       guild: {
-        name: 'Dori E2E Guild',
+        name: 'Dorimaki E2E Guild',
         ownerId: testUserId,
       },
       channels: [
         {
           id: textChannelId,
-          name: 'dori-e2e',
+          name: 'dorimaki-e2e',
           type: ChannelType.GuildText,
         },
       ],
@@ -130,7 +130,7 @@ e2eTest(
       if (hranaResult instanceof Error) {
         throw hranaResult
       }
-      process.env['DORI_DB_URL'] = hranaResult
+      process.env['DORIMAKI_DB_URL'] = hranaResult
       await initDatabase()
       await setBotToken(discord.botUserId, discord.botToken)
 
@@ -148,13 +148,13 @@ e2eTest(
       })
 
       await discord.channel(textChannelId).user(testUserId).sendMessage({
-        content: 'Reply with exactly: dori digital twin ok',
+        content: 'Reply with exactly: dorimaki digital twin ok',
       })
 
       const createdThread = await discord.channel(textChannelId).waitForThread({
         timeout: 60_000,
         predicate: (thread) => {
-          return thread.name === 'Reply with exactly: dori digital twin ok'
+          return thread.name === 'Reply with exactly: dorimaki digital twin ok'
         },
       })
 
@@ -190,8 +190,8 @@ e2eTest(
         }),
       ])
 
-      delete process.env['DORI_LOCK_PORT']
-      delete process.env['DORI_DB_URL']
+      delete process.env['DORIMAKI_LOCK_PORT']
+      delete process.env['DORIMAKI_DB_URL']
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   },

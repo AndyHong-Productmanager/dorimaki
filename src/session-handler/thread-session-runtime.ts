@@ -227,8 +227,8 @@ function stripToastSessionId({ message }: { message: string }): string {
 }
 
 const shouldLogSessionEvents =
-  process.env['DORI_LOG_SESSION_EVENTS'] === '1' ||
-  process.env['DORI_VITEST'] === '1'
+  process.env['DORIMAKI_LOG_SESSION_EVENTS'] === '1' ||
+  process.env['DORIMAKI_VITEST'] === '1'
 
 // ── Registry ─────────────────────────────────────────────────────
 // Runtime instances are kept in a plain Map (not Zustand — the Map
@@ -731,7 +731,7 @@ export type IngressInput = {
   /**
    * `opencode` (default): send via session.promptAsync and let opencode
    * serialize pending user turns internally.
-   * `local-queue`: keep in dori's local queue (used by /queue flows).
+   * `local-queue`: keep in dorimaki's local queue (used by /queue flows).
    */
   mode?: 'opencode' | 'local-queue'
   // Force a new assistant-part routing window by resetting run-state to
@@ -756,7 +756,7 @@ export type IngressInput = {
   permissions?: string[]
   injectionGuardPatterns?: string[]
   /**
-   * Parent OpenCode session ID from explicit `dori send --parent-session` only.
+   * Parent OpenCode session ID from explicit `dorimaki send --parent-session` only.
    * Stored once on first ingress and injected into the child system message.
    * Never set for /btw, /fork, or task/subagent children (keeps system prompt cache).
    */
@@ -772,7 +772,7 @@ export type IngressInput = {
    */
   noReply?: boolean
   /**
-   * True only for the wake prompt posted by the dori_sleep task runner.
+   * True only for the wake prompt posted by the dorimaki_sleep task runner.
    * Every other ingress cancels a pending sleep; this one must not, because it
    * is delivering that sleep rather than superseding it.
    */
@@ -2522,7 +2522,7 @@ export class ThreadSessionRuntime {
     if (
       part.type === 'tool' &&
       part.state.status === 'completed' &&
-      part.tool.endsWith('dori_action_buttons')
+      part.tool.endsWith('dorimaki_action_buttons')
     ) {
       const sessionId = this.state?.sessionId
       await this.showInteractiveUi({
@@ -3724,7 +3724,7 @@ export class ThreadSessionRuntime {
   }
 
   /**
-   * Enqueue in dori's local per-thread queue.
+   * Enqueue in dorimaki's local per-thread queue.
    * Used for explicit queue workflows (/queue, queueMessage=true).
    */
   /**
@@ -3851,7 +3851,7 @@ export class ThreadSessionRuntime {
     // already set), rewrite it into a command invocation so it goes through
     // opencode's session.command API instead of being sent to the model as
     // plain text. Covers Discord chat messages, /new-session, /queue, CLI
-    // `dori send --prompt`, and scheduled tasks — all funnel through here.
+    // `dorimaki send --prompt`, and scheduled tasks — all funnel through here.
     input = maybeConvertLeadingCommand(input)
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
@@ -5176,7 +5176,7 @@ export class ThreadSessionRuntime {
       }
       session = createResult.data
       // Insert DB row immediately so the external-sync poller sees
-      // source='dori' before the next poll tick and skips this session.
+      // source='dorimaki' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
       await setThreadSession(this.thread.id, session.id)
       if (injectionGuardPatterns?.length) {
@@ -5527,7 +5527,7 @@ export class ThreadSessionRuntime {
    *
    * Used by /model and /unset-model so opencode can restart from the
    * current session history with the updated model preference, without
-   * replaying/fetching the last user message in dori.
+   * replaying/fetching the last user message in dorimaki.
    */
   async retryLastUserPrompt(): Promise<boolean> {
     const state = this.state

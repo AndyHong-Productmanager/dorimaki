@@ -36,7 +36,7 @@ const geminiApiKey =
   ''
 const geminiModel = process.env['GEMINI_FLASH_MODEL'] || 'gemini-2.5-flash'
 const shouldRunRealCapture =
-  geminiApiKey.length > 0 && process.env['DORI_RUN_REAL_EVENT_CAPTURE'] === '1'
+  geminiApiKey.length > 0 && process.env['DORIMAKI_RUN_REAL_EVENT_CAPTURE'] === '1'
 const realCaptureTest = shouldRunRealCapture ? test : test.skip
 
 const TEST_USER_ID = '200000000000003001'
@@ -320,9 +320,9 @@ describe('real event stream capture fixtures (cached provider)', () => {
       })
     })
 
-    process.env['DORI_LOCK_PORT'] = String(lockPort)
-    process.env['DORI_LOG_OPENCODE_SESSION_EVENTS'] = '1'
-    process.env['DORI_OPENCODE_SESSION_EVENTS_DIR'] = directories.sessionEventsDir
+    process.env['DORIMAKI_LOCK_PORT'] = String(lockPort)
+    process.env['DORIMAKI_LOG_OPENCODE_SESSION_EVENTS'] = '1'
+    process.env['DORIMAKI_OPENCODE_SESSION_EVENTS_DIR'] = directories.sessionEventsDir
     setDataDir(directories.dataDir)
 
     previousDefaultVerbosity = store.getState().defaultVerbosity
@@ -346,7 +346,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['DORI_DB_URL'] = hranaResult
+    process.env['DORIMAKI_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(discord.botUserId, discord.botToken)
     await setChannelDirectory({
@@ -409,10 +409,10 @@ describe('real event stream capture fixtures (cached provider)', () => {
       }),
     ])
 
-    delete process.env['DORI_LOCK_PORT']
-    delete process.env['DORI_DB_URL']
-    delete process.env['DORI_LOG_OPENCODE_SESSION_EVENTS']
-    delete process.env['DORI_OPENCODE_SESSION_EVENTS_DIR']
+    delete process.env['DORIMAKI_LOCK_PORT']
+    delete process.env['DORIMAKI_DB_URL']
+    delete process.env['DORIMAKI_LOG_OPENCODE_SESSION_EVENTS']
+    delete process.env['DORIMAKI_OPENCODE_SESSION_EVENTS_DIR']
 
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
@@ -574,7 +574,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
     async () => {
       const beforeFiles = getSessionLogState()
       const prompt =
-        'REAL_FIXTURE_ACTION_BUTTONS. First response MUST call tool `dori_action_buttons` with {"buttons":[{"label":"Approve capture","color":"green"}]}. Do not send text before the tool call. After user clicks, reply exactly: action-buttons-done.'
+        'REAL_FIXTURE_ACTION_BUTTONS. First response MUST call tool `dorimaki_action_buttons` with {"buttons":[{"label":"Approve capture","color":"green"}]}. Do not send text before the tool call. After user clicks, reply exactly: action-buttons-done.'
 
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: prompt,
@@ -622,7 +622,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
         beforeFiles,
         assertEvents: (events) => {
           expect(events.length).toBeGreaterThan(0)
-          const hasActionTool = hasToolEvent({ events, tool: 'dori_action_buttons' })
+          const hasActionTool = hasToolEvent({ events, tool: 'dorimaki_action_buttons' })
           expect(hasActionTool).toBe(true)
         },
       })

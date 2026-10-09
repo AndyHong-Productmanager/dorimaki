@@ -86,7 +86,7 @@ cli
 
       if (!botRow) {
         cliLogger.error(
-          'No bot credentials found. Run `dori` first to set up the bot.',
+          'No bot credentials found. Run `dorimaki` first to set up the bot.',
         )
         process.exit(EXIT_NO_RESTART)
       }

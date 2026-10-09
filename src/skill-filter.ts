@@ -1,4 +1,4 @@
-// Computes opencode permission.skill rules from dori's --enable-skill /
+// Computes opencode permission.skill rules from dorimaki's --enable-skill /
 // --disable-skill CLI flags.
 //
 // OpenCode filters skills available to the model via

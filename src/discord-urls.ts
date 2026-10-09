@@ -57,15 +57,15 @@ export function createDiscordRest(token: string): REST {
 }
 
 /**
- * Returns the internet-reachable base URL for this dori instance.
- * When DORI_INTERNET_REACHABLE_URL is set (e.g. "https://my-dori.fly.dev"),
- * dori binds the hrana server to 0.0.0.0 and exposes a /dori/wake endpoint
+ * Returns the internet-reachable base URL for this dorimaki instance.
+ * When DORIMAKI_INTERNET_REACHABLE_URL is set (e.g. "https://my-dorimaki.fly.dev"),
+ * dorimaki binds the hrana server to 0.0.0.0 and exposes a /dorimaki/wake endpoint
  * so the gateway-proxy can wake this instance. Discord traffic still flows
  * through the normal path (gateway-proxy in gateway mode, direct in self-hosted).
- * Returns null when not set (dori only reachable on localhost).
+ * Returns null when not set (dorimaki only reachable on localhost).
  */
 export function getInternetReachableBaseUrl(): string | null {
-  return process.env['DORI_INTERNET_REACHABLE_URL'] || null
+  return process.env['DORIMAKI_INTERNET_REACHABLE_URL'] || null
 }
 
 /**

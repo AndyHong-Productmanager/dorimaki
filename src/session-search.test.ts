@@ -69,10 +69,10 @@ describe('session search helpers', () => {
   test('resolves --all to every registered project directory', () => {
     const resolved = resolveSessionSearchDirectories({
       all: true,
-      registeredDirectories: ['/tmp/dori', '/tmp/website', '/tmp/dori'],
+      registeredDirectories: ['/tmp/dorimaki', '/tmp/website', '/tmp/dorimaki'],
       cwd: '/tmp/current',
     })
-    expect(resolved).toEqual(['/tmp/dori', '/tmp/website'])
+    expect(resolved).toEqual(['/tmp/dorimaki', '/tmp/website'])
   })
 
   test('returns error when --all has no registered projects', () => {
@@ -89,7 +89,7 @@ describe('session search helpers', () => {
       resolveSessionSearchDirectories({
         all: false,
         cwd: '/tmp/current',
-        registeredDirectories: ['/tmp/dori'],
+        registeredDirectories: ['/tmp/dorimaki'],
       }),
     ).toEqual(['/tmp/current'])
     expect(
@@ -97,7 +97,7 @@ describe('session search helpers', () => {
         all: false,
         explicitDirectory: '/tmp/website',
         cwd: '/tmp/current',
-        registeredDirectories: ['/tmp/dori'],
+        registeredDirectories: ['/tmp/dorimaki'],
       }),
     ).toEqual(['/tmp/website'])
   })
@@ -128,7 +128,7 @@ describe('session search helpers', () => {
         {
           id: 'ses_new',
           title: 'new hit',
-          directory: '/tmp/dori',
+          directory: '/tmp/dorimaki',
           updated: now,
         },
         {
@@ -206,7 +206,7 @@ describe('session search helpers', () => {
         {
           id: 'ses_new',
           title: 'new hit',
-          directory: '/tmp/dori',
+          directory: '/tmp/dorimaki',
           updated: 3,
         },
         {
@@ -275,8 +275,8 @@ describe('session search helpers', () => {
         },
         {
           id: 'ses_new',
-          title: 'new dori hit',
-          directory: '/tmp/dori',
+          title: 'new dorimaki hit',
+          directory: '/tmp/dorimaki',
           updated: 3,
           messages: [
             {
@@ -324,8 +324,8 @@ describe('session search helpers', () => {
       'ses_new',
       'ses_mid',
     ])
-    expect(result.matches[0]?.directory).toBe('/tmp/dori')
-    expect(result.matches[0]?.source).toBe('dori')
+    expect(result.matches[0]?.directory).toBe('/tmp/dorimaki')
+    expect(result.matches[0]?.source).toBe('dorimaki')
     expect(result.matches[1]?.directory).toBe('/tmp/cli')
   })
 })

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import {
   extendBashToolDefinition,
-  injectDoriSessionEnv,
-  DORI_SESSION_ID_ENV,
+  injectDorimakiSessionEnv,
+  DORIMAKI_SESSION_ID_ENV,
   resolveUploadToDiscordSessionId,
   type ToolDefinitionOutput,
 } from './bash-tool-schema-plugin.js'
@@ -60,12 +60,12 @@ describe('extendBashToolDefinition', () => {
 describe('upload-to-discord session targeting', () => {
   test('bash env uses the live OpenCode session, not a copied --session flag', () => {
     const env: Record<string, string> = {}
-    injectDoriSessionEnv({ sessionID: 'ses_child', env })
-    expect(env).toEqual({ [DORI_SESSION_ID_ENV]: 'ses_child' })
+    injectDorimakiSessionEnv({ sessionID: 'ses_child', env })
+    expect(env).toEqual({ [DORIMAKI_SESSION_ID_ENV]: 'ses_child' })
     expect(
       resolveUploadToDiscordSessionId({
         flagSessionId: 'ses_parent',
-        envSessionId: env[DORI_SESSION_ID_ENV],
+        envSessionId: env[DORIMAKI_SESSION_ID_ENV],
       }),
     ).toBe('ses_child')
   })

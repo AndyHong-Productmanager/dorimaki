@@ -1,4 +1,4 @@
-// Runtime configuration for Dori bot.
+// Runtime configuration for Dorimaki bot.
 // Thin re-export layer over the centralized zustand store (store.ts).
 // Getter/setter functions are kept for backwards compatibility so existing
 // import sites don't need to change. They delegate to store.getState() and
@@ -9,13 +9,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { store } from './store.js'
 
-const DEFAULT_DATA_DIR = path.join(os.homedir(), '.dori')
+const DEFAULT_DATA_DIR = path.join(os.homedir(), '.dorimaki')
 
 /**
  * Get the data directory path.
- * Order: store value, vitest temp dir, DORI_DATA_DIR, then ~/.dori.
- * Under vitest (DORI_VITEST env var), auto-creates an isolated temp dir so
- * tests never touch the real ~/.dori/ database. Tests that need a specific
+ * Order: store value, vitest temp dir, DORIMAKI_DATA_DIR, then ~/.dorimaki.
+ * Under vitest (DORIMAKI_VITEST env var), auto-creates an isolated temp dir so
+ * tests never touch the real ~/.dorimaki/ database. Tests that need a specific
  * dir can still call setDataDir() before any DB access to override this.
  */
 export function getDataDir(): string {
@@ -23,15 +23,15 @@ export function getDataDir(): string {
   if (current) {
     return current
   }
-  // Tests stay isolated even if the parent process exported DORI_DATA_DIR.
-  if (process.env.DORI_VITEST) {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dori-test-'))
+  // Tests stay isolated even if the parent process exported DORIMAKI_DATA_DIR.
+  if (process.env.DORIMAKI_VITEST) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-test-'))
     store.setState({ dataDir: tmpDir })
     return tmpDir
   }
-  // Child processes (OpenCode server, dori shim commands) inherit this from
-  // opencode.ts. Without it they would silently use ~/.dori.
-  const fromEnv = process.env.DORI_DATA_DIR
+  // Child processes (OpenCode server, dorimaki shim commands) inherit this from
+  // opencode.ts. Without it they would silently use ~/.dorimaki.
+  const fromEnv = process.env.DORIMAKI_DATA_DIR
   if (fromEnv) {
     const resolved = path.resolve(fromEnv)
     store.setState({ dataDir: resolved })
@@ -115,12 +115,12 @@ const DEFAULT_LOCK_PORT = 29988
 
 /**
  * Derive a lock port from the data directory path.
- * If DORI_LOCK_PORT is set to a valid TCP port, it takes precedence.
- * Returns 29988 for the default ~/.dori directory (backwards compatible).
+ * If DORIMAKI_LOCK_PORT is set to a valid TCP port, it takes precedence.
+ * Returns 29988 for the default ~/.dorimaki directory (backwards compatible).
  * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
  */
 export function getLockPort(): number {
-  const envPortRaw = process.env['DORI_LOCK_PORT']
+  const envPortRaw = process.env['DORIMAKI_LOCK_PORT']
   if (envPortRaw) {
     const envPort = Number.parseInt(envPortRaw, 10)
     if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) {

@@ -896,7 +896,7 @@ export async function updateThreadQueueItemPayload({
 }
 
 export async function setThreadSession(threadId: string, sessionId: string) {
-  await upsertThreadSession({ threadId, sessionId, source: 'dori' })
+  await upsertThreadSession({ threadId, sessionId, source: 'dorimaki' })
 }
 
 export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
@@ -1210,7 +1210,7 @@ export function formatProjectAlreadyRegisteredError({
   return [
     `Channel already exists for this directory: ${directory}`,
     `Channel ID: ${channelId}`,
-    `Remove the mapping first: dori project remove ${channelId}`,
+    `Remove the mapping first: dorimaki project remove ${channelId}`,
   ].join('\n')
 }
 

@@ -69,8 +69,8 @@ function startFixture({
       cwd: path.dirname(srcDir),
       env: {
         ...process.env,
-        DORI_LOCK_PORT: String(port),
-        __DORI_CHILD: ipc ? '1' : undefined,
+        DORIMAKI_LOCK_PORT: String(port),
+        __DORIMAKI_CHILD: ipc ? '1' : undefined,
         ...env,
       },
       stdio: ipc ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'],
@@ -110,7 +110,7 @@ function hranaScript({
     import path from 'node:path'
     import fs from 'node:fs'
     import { startHranaServer } from '${hranaModule}'
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dori-lifecycle-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-lifecycle-'))
     const result = await startHranaServer({ dbPath: path.join(dir, 'db.sqlite') })
     if (result instanceof Error) throw result
     ${extra}
@@ -137,7 +137,7 @@ const WRAPPER_SCRIPT = dedent`
     child = spawn(
       process.execPath,
       ['--import', 'tsx', '--input-type=module', '-e', process.env.CHILD_SCRIPT],
-      { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], env: { ...process.env, __DORI_CHILD: '1' } },
+      { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], env: { ...process.env, __DORIMAKI_CHILD: '1' } },
     )
     console.log('CHILD_PID=' + child.pid)
     child.on('exit', () => {

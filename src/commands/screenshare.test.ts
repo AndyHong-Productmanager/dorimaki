@@ -17,12 +17,12 @@ describe('screenshare security defaults', () => {
 
   test('builds a secure noVNC URL', () => {
     const url = new URL(
-      buildNoVncUrl({ tunnelHost: '0123456789abcdef-tunnel.DORIDOTDEV' }),
+      buildNoVncUrl({ tunnelHost: '0123456789abcdef-tunnel.DORIMAKIDOTDEV' }),
     )
 
     expect(url.origin).toBe('https://novnc.com')
     expect(url.searchParams.get('host')).toBe(
-      '0123456789abcdef-tunnel.DORIDOTDEV',
+      '0123456789abcdef-tunnel.DORIMAKIDOTDEV',
     )
     expect(url.searchParams.get('port')).toBe('443')
     expect(url.searchParams.get('encrypt')).toBe('1')

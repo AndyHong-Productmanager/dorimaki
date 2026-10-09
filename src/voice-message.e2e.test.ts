@@ -299,7 +299,7 @@ e2eTest('voice message handling', () => {
     directories = createRunDirectories()
     const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
-    process.env['DORI_LOCK_PORT'] = String(lockPort)
+    process.env['DORIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools_and_text' })
@@ -364,7 +364,7 @@ e2eTest('voice message handling', () => {
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['DORI_DB_URL'] = hranaResult
+    process.env['DORIMAKI_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(discord.botUserId, discord.botToken)
 
@@ -419,8 +419,8 @@ e2eTest('voice message handling', () => {
       }),
     ])
 
-    delete process.env['DORI_LOCK_PORT']
-    delete process.env['DORI_DB_URL']
+    delete process.env['DORIMAKI_LOCK_PORT']
+    delete process.env['DORIMAKI_DB_URL']
     store.setState({ defaultVerbosity: previousDefaultVerbosity })
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })

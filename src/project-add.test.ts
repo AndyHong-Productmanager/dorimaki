@@ -1,4 +1,4 @@
-// Tests that `dori project add` refuses a folder already registered locally.
+// Tests that `dorimaki project add` refuses a folder already registered locally.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -18,7 +18,7 @@ describe('project add duplicate directory', () => {
   let projectDir: string
 
   beforeEach(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dori-project-add-'))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-project-add-'))
     projectDir = path.join(tmpDir, 'repo')
     fs.mkdirSync(projectDir)
     setDataDir(path.join(tmpDir, 'data'))
@@ -74,7 +74,7 @@ describe('project add duplicate directory', () => {
     ).toMatchInlineSnapshot(`
       "Channel already exists for this directory: /tmp/repo
       Channel ID: 111
-      Remove the mapping first: dori project remove 111"
+      Remove the mapping first: dorimaki project remove 111"
     `)
   })
 })

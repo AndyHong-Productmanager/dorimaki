@@ -1,5 +1,5 @@
 // Drizzle client initialization with libSQL.
-// Uses DORI_DB_URL env var when set (plugin process → Hrana HTTP),
+// Uses DORIMAKI_DB_URL env var when set (plugin process → Hrana HTTP),
 // otherwise falls back to direct file: access (bot process, CLI subcommands).
 // Schema bootstrap runs in both modes because tests and plugin children may be
 // the first process to touch a fresh SQLite file through Hrana.
@@ -23,22 +23,22 @@ function createDrizzleClient(client: Client) {
   return drizzle({ client, schema, relations: schema.relations })
 }
 
-export type DoriDb = ReturnType<typeof createDrizzleClient>
+export type DorimakiDb = ReturnType<typeof createDrizzleClient>
 
 const dbLogger = createLogger(LogPrefix.DB)
 
 let clientInstance: Client | null = null
-let dbInstance: DoriDb | null = null
-let initPromise: Promise<DoriDb> | null = null
+let dbInstance: DorimakiDb | null = null
+let initPromise: Promise<DorimakiDb> | null = null
 
-// Under vitest, clear any inherited DORI_DB_URL from the parent bot process
+// Under vitest, clear any inherited DORIMAKI_DB_URL from the parent bot process
 // so tests default to file-based access using the auto-isolated temp data dir.
-// Tests that need Hrana can set DORI_DB_URL explicitly after import.
-if (process.env.DORI_VITEST) {
-  delete process.env['DORI_DB_URL']
+// Tests that need Hrana can set DORIMAKI_DB_URL explicitly after import.
+if (process.env.DORIMAKI_VITEST) {
+  delete process.env['DORIMAKI_DB_URL']
 }
 
-export function getDb(): Promise<DoriDb> {
+export function getDb(): Promise<DorimakiDb> {
   if (dbInstance) {
     return Promise.resolve(dbInstance)
   }
@@ -51,8 +51,8 @@ export function getDb(): Promise<DoriDb> {
 
 
 function getDbUrl(): string {
-  if (process.env.DORI_DB_URL) {
-    return process.env.DORI_DB_URL
+  if (process.env.DORIMAKI_DB_URL) {
+    return process.env.DORIMAKI_DB_URL
   }
   const dataDir = getDataDir()
   const dbPath = path.join(dataDir, 'discord-sessions.db')
@@ -60,14 +60,14 @@ function getDbUrl(): string {
 }
 
 function getDbAuthToken(): string | undefined {
-  const token = process.env.DORI_DB_AUTH_TOKEN
+  const token = process.env.DORIMAKI_DB_AUTH_TOKEN
   if (!token) {
     return undefined
   }
   return token
 }
 
-async function initializeDb(): Promise<DoriDb> {
+async function initializeDb(): Promise<DorimakiDb> {
   const dbUrl = getDbUrl()
   const isFileMode = dbUrl.startsWith('file:')
 
@@ -166,7 +166,7 @@ async function migrateSchema({
   db,
   client,
 }: {
-  db: DoriDb
+  db: DorimakiDb
   client: Client
 }): Promise<void> {
   // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
@@ -211,7 +211,7 @@ async function migrateSchema({
     'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN proxy_url TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
-    "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'dori'",
+    "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'dorimaki'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN updated_at DATETIME',
@@ -238,7 +238,7 @@ async function migrateSchema({
     "UPDATE channel_verbosity SET verbosity = 'text_and_essential_tools' WHERE verbosity = 'text-and-essential-tools'",
     "UPDATE channel_verbosity SET verbosity = 'text_only' WHERE verbosity = 'text-only'",
     "UPDATE bot_tokens SET bot_mode = 'self_hosted' WHERE bot_mode = 'self-hosted'",
-    "UPDATE bot_tokens SET proxy_url = REPLACE(proxy_url, 'discord-gateway.dori.xyz', 'discord-gateway.DORIDOTDEV') WHERE bot_mode = 'gateway' AND proxy_url LIKE '%discord-gateway.dori.xyz%'",
+    "UPDATE bot_tokens SET proxy_url = REPLACE(proxy_url, 'discord-gateway.dorimaki.xyz', 'discord-gateway.DORIMAKIDOTDEV') WHERE bot_mode = 'gateway' AND proxy_url LIKE '%discord-gateway.dorimaki.xyz%'",
     "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
     "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
     'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',
@@ -269,7 +269,7 @@ async function migrateSchema({
       project_directory, workspace_directory, workspace_name, created_at
     )
     SELECT
-      thread_id, 'dori-worktree', status, error_message,
+      thread_id, 'dorimaki-worktree', status, error_message,
       project_directory, worktree_directory, worktree_name, created_at
     FROM thread_worktrees
     WHERE thread_id NOT IN (SELECT thread_id FROM thread_workspaces)

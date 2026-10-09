@@ -1,6 +1,6 @@
 // Prefixed logging utility using @clack/prompts for consistent stderr diagnostics and file logs.
 // Never write logger output to stdout because many CLI subcommands print
-// machine-readable data there, for example `dori project list --json`.
+// machine-readable data there, for example `dorimaki project list --json`.
 
 import { log as clackLog } from '@clack/prompts'
 import fs from 'node:fs'
@@ -68,18 +68,18 @@ let logFilePath: string | null = null
 
 /**
  * Initialize file logging. Call this after setDataDir() so the log file
- * is written to `<dataDir>/dori.log`. The log file is truncated on
+ * is written to `<dataDir>/dorimaki.log`. The log file is truncated on
  * every bot startup so it contains only the current run's logs.
  */
 export function initLogFile(dataDir: string): void {
-  logFilePath = path.join(dataDir, 'dori.log')
+  logFilePath = path.join(dataDir, 'dorimaki.log')
   const logDir = path.dirname(logFilePath)
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true })
   }
   fs.writeFileSync(
     logFilePath,
-    `--- dori log started at ${new Date().toISOString()} ---\n`,
+    `--- dorimaki log started at ${new Date().toISOString()} ---\n`,
   )
 }
 
@@ -89,7 +89,7 @@ export function initLogFile(dataDir: string): void {
  * the bot process already created with initLogFile().
  */
 export function setLogFilePath(dataDir: string): void {
-  logFilePath = path.join(dataDir, 'dori.log')
+  logFilePath = path.join(dataDir, 'dorimaki.log')
 }
 
 export function getLogFilePath(): string | null {
@@ -177,10 +177,10 @@ const stderrLogOptions = { output: process.stderr, spacing: 0 }
 
 // Suppress clack terminal output during vitest runs to avoid flooding
 // test output with hundreds of log lines. File logging still works.
-// Set DORI_TEST_LOGS=1 when rerunning a failing test to see all
-// dori logger output in the terminal for debugging.
-const isVitest = !!process.env['DORI_VITEST']
-const showTestLogs = isVitest && !!process.env['DORI_TEST_LOGS']
+// Set DORIMAKI_TEST_LOGS=1 when rerunning a failing test to see all
+// dorimaki logger output in the terminal for debugging.
+const isVitest = !!process.env['DORIMAKI_VITEST']
+const showTestLogs = isVitest && !!process.env['DORIMAKI_TEST_LOGS']
 
 export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = prefix.padEnd(MAX_PREFIX_LENGTH)

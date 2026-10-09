@@ -20,13 +20,13 @@ cli
     '--limit <n>',
     z.number().default(50).describe('Maximum threads to show'),
   )
-  .example('dori thread list --channel 123456789012345678')
-  .example('dori thread list --channel 123456789012345678 --json')
+  .example('dorimaki thread list --channel 123456789012345678')
+  .example('dorimaki thread list --channel 123456789012345678 --json')
   .action(async (options, { console, process }) => {
     try {
       if (!options.channel) {
         cliLogger.error(
-          'Channel ID is required. Use --channel <channelId>. Find remote channels with `dori project list --all --json`.',
+          'Channel ID is required. Use --channel <channelId>. Find remote channels with `dorimaki project list --all --json`.',
         )
         process.exit(EXIT_NO_RESTART)
       }

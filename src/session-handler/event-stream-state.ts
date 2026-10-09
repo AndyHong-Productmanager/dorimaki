@@ -1207,7 +1207,7 @@ export function didLatestUserTurnUseSleepTool({
     if (event?.type !== 'message.part.updated') continue
     const part = event.properties.part
     if (part.sessionID !== sessionId || part.type !== 'tool') continue
-    if (part.tool === 'dori_sleep' && assistantMessageIds.has(part.messageID)) {
+    if (part.tool === 'dorimaki_sleep' && assistantMessageIds.has(part.messageID)) {
       return true
     }
   }

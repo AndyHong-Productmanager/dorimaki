@@ -32,12 +32,12 @@ import {
   getBotTokenWithMode,
   findTextChannelByVoiceChannel,
 } from './database.js'
-import { transcribeViaDoriGateway } from './cloudflare-transcription.js'
+import { transcribeViaDorimakiGateway } from './cloudflare-transcription.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
   NOTIFY_MESSAGE_FLAGS,
-  hasDoriBotPermission,
+  hasDorimakiBotPermission,
 } from './discord-utils.js'
 import { requestAudioApiKey } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
@@ -202,7 +202,7 @@ export async function setupVoiceHandling({
     appId,
     geminiApiKey,
     systemMessage: dedent`
-    You are Dori, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
+    You are Dorimaki, an AI similar to Jarvis: you help your user (an engineer) controlling his coding agent, just like Jarvis controls Ironman armor and machines. Speak fast.
 
     You should talk like Jarvis, British accent, satirical, joking and calm. Be short and concise. Speak fast.
 
@@ -335,7 +335,7 @@ export async function setupVoiceHandling({
         return
       }
 
-      if (!hasDoriBotPermission(member, guild)) {
+      if (!hasDorimakiBotPermission(member, guild)) {
         voiceLogger.log(`[VOICE] Ignoring unauthorized speaker ${userId}`)
         return
       }
@@ -517,7 +517,7 @@ export async function processVoiceAttachment({
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
 
   const deterministicConfig =
-    process.env['DORI_VITEST'] === '1'
+    process.env['DORIMAKI_VITEST'] === '1'
       ? store.getState().test.deterministicTranscription
       : null
 
@@ -535,7 +535,7 @@ export async function processVoiceAttachment({
   // Deterministic mode: skip audio download and AI model call entirely,
   // return a canned result after an optional delay. Used by e2e tests to
   // control transcription output, timing, and queueMessage deterministically.
-  // Only active when DORI_VITEST=1 to prevent accidental activation in production.
+  // Only active when DORIMAKI_VITEST=1 to prevent accidental activation in production.
   if (deterministicConfig) {
     if (deterministicConfig.delayMs) {
       await new Promise<void>((resolve) => {
@@ -636,7 +636,7 @@ export async function processVoiceAttachment({
   }
 
   // No user-configured key: gateway-mode installs get one free transcription
-  // via the DORIDOTDEV Whisper fallback before we bother the user with the
+  // via the DORIMAKIDOTDEV Whisper fallback before we bother the user with the
   // "add API key" dialog. This fallback has no tool-calling, so it can't
   // detect queueMessage/sessionAction/agent hints spoken in the voice message the way the
   // OpenAI/Gemini path can.
@@ -644,14 +644,14 @@ export async function processVoiceAttachment({
   if (!transcriptionApiKey) {
     const botRow = await getBotTokenWithMode().catch(() => undefined)
     if (botRow?.mode === 'gateway' && botRow.clientId && botRow.clientSecret) {
-      const result = await transcribeViaDoriGateway({
+      const result = await transcribeViaDorimakiGateway({
         audio: audioBuffer,
         mediaType: audioAttachment.contentType || undefined,
         clientId: botRow.clientId,
         clientSecret: botRow.clientSecret,
       })
       if (result instanceof Error) {
-        voiceLogger.log(`Dori gateway transcription fallback failed:`, result)
+        voiceLogger.log(`Dorimaki gateway transcription fallback failed:`, result)
       } else {
         gatewayTranscription = result
       }
@@ -768,7 +768,7 @@ export function registerVoiceStateHandler({
         const member = newState.member || oldState.member
         if (!member) return
 
-        if (!hasDoriBotPermission(member)) {
+        if (!hasDorimakiBotPermission(member)) {
           return
         }
 
@@ -793,7 +793,7 @@ export function registerVoiceStateHandler({
               if (m.id === member.id || m.user.bot) {
                 return false
               }
-              return hasDoriBotPermission(m)
+              return hasDorimakiBotPermission(m)
             })
 
             if (!hasOtherPermittedUsers) {
@@ -834,7 +834,7 @@ export function registerVoiceStateHandler({
                   if (m.id === member.id || m.user.bot) {
                     return false
                   }
-                  return hasDoriBotPermission(m)
+                  return hasDorimakiBotPermission(m)
                 },
               )
 

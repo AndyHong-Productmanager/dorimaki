@@ -147,7 +147,7 @@ describe('queue advanced: question tool answer', () => {
 
     // Wait for the question dropdown message to appear in Discord.
     // This is the user-visible signal that the question tool fired and
-    // dori processed the event. Avoids polling internal Maps which
+    // dorimaki processed the event. Avoids polling internal Maps which
     // have timing sensitivity on slower CI hardware.
     await waitForBotMessageContaining({
       discord: ctx.discord,

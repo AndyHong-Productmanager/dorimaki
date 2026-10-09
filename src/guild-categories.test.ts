@@ -6,9 +6,9 @@ import { DigitalDiscord } from 'discord-digital-twin/src'
 import { setDataDir } from './config.js'
 import { closeDb } from './db.js'
 import {
-  createDefaultDoriChannel,
+  createDefaultDorimakiChannel,
   createProjectChannels,
-  ensureDoriCategory,
+  ensureDorimakiCategory,
 } from './channel-management.js'
 import {
   getGuildCategories,
@@ -68,7 +68,7 @@ function guild() {
   return client.guilds.cache.get(guildId)!
 }
 
-test('first project creates a Dori group and stores its id', async () => {
+test('first project creates a Dorimaki group and stores its id', async () => {
   const created = await createProjectChannels({
     guild: guild(),
     projectDirectory: path.join(directory, 'web'),
@@ -76,7 +76,7 @@ test('first project creates a Dori group and stores its id', async () => {
   const channel = await guild().channels.fetch(created.textChannelId)
   expect(channel?.parentId).toBeTruthy()
   const category = await guild().channels.fetch(channel!.parentId!)
-  expect(category?.name).toBe('Dori')
+  expect(category?.name).toBe('Dorimaki')
   expect(await getGuildCategories(guildId)).toEqual({
     guild_id: guildId,
     category_id: category!.id,
@@ -103,7 +103,7 @@ test('renamed group still receives new project channels', async () => {
   )
 })
 
-test('a second machine creates its own Dori group', async () => {
+test('a second machine creates its own Dorimaki group', async () => {
   const first = await createProjectChannels({
     guild: guild(),
     projectDirectory: path.join(directory, 'web'),
@@ -125,8 +125,8 @@ test('a second machine creates its own Dori group', async () => {
     (channel) => channel.type === ChannelType.GuildCategory,
   )
   expect(categories.map((channel) => channel.name).sort()).toEqual([
-    'Dori',
-    'Dori',
+    'Dorimaki',
+    'Dorimaki',
   ])
 })
 
@@ -146,7 +146,7 @@ test('existing project channels adopt their parent without creating a new group'
     channelType: 'text',
     guildId,
   })
-  const resolved = await ensureDoriCategory(guild())
+  const resolved = await ensureDorimakiCategory(guild())
   expect(resolved.id).toBe(category.id)
   expect(await getGuildCategories(guildId)).toMatchObject({
     guild_id: guildId,
@@ -158,8 +158,8 @@ test('existing project channels adopt their parent without creating a new group'
   expect(categoryCount).toBe(1)
 })
 
-test('a second machine gets its own default dori channel', async () => {
-  const first = await createDefaultDoriChannel({
+test('a second machine gets its own default dorimaki channel', async () => {
+  const first = await createDefaultDorimakiChannel({
     guild: guild(),
     appId: discord.botUserId,
     isGatewayMode: true,
@@ -168,7 +168,7 @@ test('a second machine gets its own default dori channel', async () => {
   await closeDb()
 
   await openDataDir()
-  const second = await createDefaultDoriChannel({
+  const second = await createDefaultDorimakiChannel({
     guild: guild(),
     appId: discord.botUserId,
     isGatewayMode: true,
@@ -208,28 +208,28 @@ test('legacy rows from another guild do not block adoption', async () => {
     directory: path.join(directory, 'api'),
     channelType: 'text',
   })
-  const resolved = await ensureDoriCategory(guild())
+  const resolved = await ensureDorimakiCategory(guild())
   expect(resolved.id).toBe(localCategory.id)
 })
 
-test('a dori-prefixed project channel does not block the default channel', async () => {
+test('a dorimaki-prefixed project channel does not block the default channel', async () => {
   await createProjectChannels({
     guild: guild(),
-    projectDirectory: path.join(directory, 'dori-tools'),
+    projectDirectory: path.join(directory, 'dorimaki-tools'),
   })
-  const created = await createDefaultDoriChannel({
+  const created = await createDefaultDorimakiChannel({
     guild: guild(),
     appId: discord.botUserId,
     isGatewayMode: true,
   })
   expect(created).toBeTruthy()
-  expect(created!.channelName).toBe('dori')
+  expect(created!.channelName).toBe('dorimaki')
 })
 
 test('concurrent first creates share one group', async () => {
   const [first, second] = await Promise.all([
-    ensureDoriCategory(guild()),
-    ensureDoriCategory(guild()),
+    ensureDorimakiCategory(guild()),
+    ensureDorimakiCategory(guild()),
   ])
   expect(first.id).toBe(second.id)
   const categories = [...guild().channels.cache.values()].filter(

@@ -16,7 +16,7 @@ import {
 const tempDirs: string[] = []
 
 function makeDataDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dori-file-edit-log-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dorimaki-file-edit-log-'))
   tempDirs.push(dir)
   return dir
 }

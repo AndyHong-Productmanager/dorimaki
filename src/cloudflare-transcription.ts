@@ -1,10 +1,10 @@
-// Free Whisper transcription fallback via the DORIDOTDEV Cloudflare Worker.
+// Free Whisper transcription fallback via the DORIMAKIDOTDEV Cloudflare Worker.
 // Only usable in gateway mode: the worker authenticates the request against
 // the shared gateway_clients Postgres table using the CLI's own
 // clientId:clientSecret pair (the same credentials already used for
 // gateway-proxy REST/WebSocket calls), then runs
 // @cf/openai/whisper-large-v3-turbo on Cloudflare's own Workers AI account.
-// This means transcription costs Dori, never the user, so voice messages
+// This means transcription costs Dorimaki, never the user, so voice messages
 // work out of the box for gateway-mode installs with no OpenAI/Gemini key
 // configured.
 //
@@ -18,10 +18,10 @@ import { createLogger, LogPrefix } from './logger.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
-const DORI_TRANSCRIBE_URL =
-  process.env.DORI_TRANSCRIBE_URL || 'https://DORIDOTDEV/api/transcribe'
+const DORIMAKI_TRANSCRIBE_URL =
+  process.env.DORIMAKI_TRANSCRIBE_URL || 'https://DORIMAKIDOTDEV/api/transcribe'
 
-export async function transcribeViaDoriGateway({
+export async function transcribeViaDorimakiGateway({
   audio,
   mediaType,
   clientId,
@@ -34,7 +34,7 @@ export async function transcribeViaDoriGateway({
   clientId: string
   clientSecret: string
 }): Promise<string | TranscriptionError> {
-  const response = await fetch(DORI_TRANSCRIBE_URL, {
+  const response = await fetch(DORIMAKI_TRANSCRIBE_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${clientId}:${clientSecret}`,
@@ -43,7 +43,7 @@ export async function transcribeViaDoriGateway({
     body: audio,
   }).catch((cause) => {
     return new TranscriptionError({
-      reason: 'Failed to reach DORIDOTDEV transcription endpoint',
+      reason: 'Failed to reach DORIMAKIDOTDEV transcription endpoint',
       cause,
     })
   })
@@ -52,10 +52,10 @@ export async function transcribeViaDoriGateway({
   if (!response.ok) {
     const bodyText = await response.text().catch(() => '')
     voiceLogger.log(
-      `Dori gateway transcription failed: ${response.status} ${bodyText}`,
+      `Dorimaki gateway transcription failed: ${response.status} ${bodyText}`,
     )
     return new TranscriptionError({
-      reason: `DORIDOTDEV returned ${response.status}${bodyText ? `: ${bodyText}` : ''}`,
+      reason: `DORIMAKIDOTDEV returned ${response.status}${bodyText ? `: ${bodyText}` : ''}`,
     })
   }
 
@@ -69,7 +69,7 @@ export async function transcribeViaDoriGateway({
 
   if (!data.text) {
     return new TranscriptionError({
-      reason: 'Empty transcription response from dori gateway',
+      reason: 'Empty transcription response from dorimaki gateway',
     })
   }
   return data.text
