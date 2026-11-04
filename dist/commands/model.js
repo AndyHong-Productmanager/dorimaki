@@ -931,7 +931,7 @@ export async function handleModelScopeSelectMenu(interaction) {
     const modelDisplay = modelId.split('/')[1] || modelId;
     const variant = context.selectedVariant ?? null;
     const variantSuffix = variant ? ` (${variant})` : '';
-    const agentTip = '\n_Tip: create [agent .md files](https://DORIMAKIDOTDEV/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_';
+    const agentTip = '\n_Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_';
     try {
         if (selectedScope === 'session') {
             if (!context.sessionId) {

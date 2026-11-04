@@ -457,7 +457,7 @@ export async function processVoiceAttachment({ message, thread, projectDirectory
         transcriptionProvider = 'gemini';
     }
     // No user-configured key: gateway-mode installs get one free transcription
-    // via the DORIMAKIDOTDEV Whisper fallback before we bother the user with the
+    // via the kimaki.dev Whisper fallback before we bother the user with the
     // "add API key" dialog. This fallback has no tool-calling, so it can't
     // detect queueMessage/sessionAction/agent hints spoken in the voice message the way the
     // OpenAI/Gemini path can.

@@ -50,7 +50,7 @@ export function generateBotInstallUrl({ clientId, permissions = [
     return url.toString();
 }
 export const DORIMAKI_GATEWAY_APP_ID = process.env.DORIMAKI_GATEWAY_APP_ID || '1477605701202481173';
-export const DORIMAKI_WEBSITE_URL = process.env.DORIMAKI_WEBSITE_URL || 'https://DORIMAKIDOTDEV';
+export const DORIMAKI_WEBSITE_URL = process.env.DORIMAKI_WEBSITE_URL || 'https://kimaki.dev';
 export function generateDiscordInstallUrlForBot({ appId, mode, clientId, clientSecret, gatewayCallbackUrl, reachableUrl, }) {
     if (mode !== 'gateway') {
         return generateBotInstallUrl({ clientId: appId });
