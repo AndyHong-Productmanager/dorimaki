@@ -8,6 +8,68 @@ Dorimaki connects your own bot directly to Discord. It does not use Kimaki's
 gateway, OpenCode, or a hosted relay. Discord's official Gateway WebSocket is
 still used to receive messages.
 
+## 다른 PC에서 내려받아 실행하기
+
+이 구현은 비공개 저장소의 **`native-omo-cli` 브랜치**에 있습니다.
+기존 `master`는 별도 구현이므로 아래 명령에서 브랜치 이름을 빼지 마세요.
+
+새 PC에 Git, GitHub CLI(`gh`), Bun, omo CLI를 설치하세요.
+Bun 1.4.4에서 검증했으며, omo는 새 PC에서 별도로 로그인하고 모델을
+설정해야 합니다. 기존 PC의 토큰이나 인증 파일은 저장소에 포함하지 않습니다.
+
+```sh
+gh auth login
+gh repo clone AndyHong-Productmanager/dorimaki -- --branch native-omo-cli --single-branch
+cd dorimaki
+bun install --frozen-lockfile
+bun run build
+bun dist/cli.js --help
+```
+
+GitHub CLI 없이 받으려면 GitHub에 로그인한 상태에서 저장소의 브랜치를
+`native-omo-cli`로 바꾼 후 **Code → Download ZIP**을 선택하고 압축을
+푸세요. 압축을 푼 폴더에서 `bun install --frozen-lockfile`과
+`bun run build`를 실행하면 됩니다.
+
+다음 명령으로 자신의 Discord 봇을 설정합니다.
+
+```sh
+bun dist/cli.js setup
+```
+
+Application ID, 서버 ID, 허용할 사용자 ID, 봇 토큰을 입력하고 출력된
+초대 주소로 서버에 봇을 설치하세요. Discord 개발자 포털의 **Bot →
+Message Content Intent**를 켜야 일반 메시지를 받을 수 있습니다.
+토큰은 마법사에만 입력하고 GitHub에 올리지 마세요.
+
+omo가 PATH에 없으면 해당 PC의 실제 실행 파일 경로를 지정하세요.
+
+```sh
+bun dist/cli.js setup --omo-path "/absolute/path/to/omo"
+```
+
+아래 `PROJECT_DIRECTORY`는 **새 PC의 프로젝트 폴더 경로**,
+`CHANNEL_ID`는 Discord 텍스트 채널의 숫자 ID로 바꾸세요.
+
+```sh
+bun dist/cli.js project add "PROJECT_DIRECTORY" --channel CHANNEL_ID
+bun dist/cli.js doctor
+bun dist/cli.js start
+```
+
+터미널을 켜 둔 채 연결한 채널에 메시지를 보내면 대화 스레드가 생성됩니다.
+같은 봇을 다른 PC로 옮길 때는 먼저 이전 PC의 실행을 `Ctrl+C`로 종료하세요.
+설정과 세션은 PC별 로컬 데이터이므로 소스 다운로드만으로 옮겨지지 않습니다.
+실제 Discord 통합 검증 상태는 [검증 기록](docs/verification.md)을 참고하세요.
+
+Git으로 설치한 경우 업데이트는 다음과 같습니다.
+
+```sh
+git pull --ff-only origin native-omo-cli
+bun install --frozen-lockfile
+bun run build
+```
+
 ## Requirements
 
 - Bun 1.3 or newer.
