@@ -1,37 +1,42 @@
-// omo app-server process manager.
-// Mirrors the role of opencode.ts: ONE shared `omo app-server` process for
-// all project directories; threads scope work per cwd.
+// omo RPC host process manager.
+// Mirrors the role of opencode.ts: ONE shared `omo --mode rpc --multi-session`
+// process for all project directories. Each Discord thread maps to one omo
+// session opened on that host with its own cwd.
 //
-// The app-server listens on a loopback websocket and requires a bearer token
-// it writes to ~/.omo/agent/app-server/ws-token on startup.
+// The host talks JSONL over stdio, so there is no port, token file or socket
+// authentication to manage. Older omo builds exposed `omo app-server`; that
+// command was removed in favour of this RPC mode.
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import fs from 'node:fs'
-import http from 'node:http'
-import net from 'node:net'
-import os from 'node:os'
-import path from 'node:path'
 
 import { createLogger, LogPrefix } from '../logger.js'
+import { OmoRpcConnection } from './rpc.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
-const DEFAULT_HOSTNAME = '127.0.0.1'
-const TOKEN_PATH = path.join(os.homedir(), '.omo/agent/app-server/ws-token')
+const STARTUP_TIMEOUT_MS = 60_000
 
 export type OmoServerInfo = {
-  port: number
-  hostname: string
   pid: number | null
   spawnedByUs: boolean
+  serverVersion: string | undefined
+  capabilities: string[]
 }
 
 type LifecycleEvent = { type: 'started'; port: number } | { type: 'stopped' }
 
 let server: OmoServerInfo | null = null
+let connection: OmoRpcConnection | null = null
 let child: ChildProcess | null = null
 let starting: Promise<OmoServerInfo | Error> | null = null
 const lifecycleSubscribers = new Set<(e: LifecycleEvent) => void>()
+const connectionSetupHooks = new Set<(conn: OmoRpcConnection) => Promise<void> | void>()
+
+/** Run setup (event routing, client capabilities) on every new host before it is used. */
+export function onOmoConnectionReady(hook: (conn: OmoRpcConnection) => Promise<void> | void): () => void {
+  connectionSetupHooks.add(hook)
+  return () => connectionSetupHooks.delete(hook)
+}
 
 export function subscribeOmoServerLifecycle(cb: (e: LifecycleEvent) => void): () => void {
   lifecycleSubscribers.add(cb)
@@ -42,103 +47,100 @@ function emit(event: LifecycleEvent): void {
   for (const cb of lifecycleSubscribers) cb(event)
 }
 
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer()
-    srv.listen(0, DEFAULT_HOSTNAME, () => {
-      const address = srv.address()
-      if (!address || typeof address === 'string') {
-        srv.close()
-        reject(new Error('Failed to allocate free port'))
-        return
-      }
-      srv.close(() => resolve(address.port))
-    })
-    srv.on('error', reject)
-  })
+export function getOmoBinary(): string {
+  return process.env.DORIMAKI_OMO_BIN || 'omo'
 }
 
-function waitForReady(port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  return new Promise((resolve) => {
-    const attempt = () => {
-      const req = http.get(
-        { host: DEFAULT_HOSTNAME, port, path: '/readyz', timeout: 1500 },
-        (res) => {
-          res.resume()
-          if (res.statusCode === 200) {
-            resolve(true)
-          } else {
-            retry()
-          }
-        },
-      )
-      req.on('error', retry)
-      req.on('timeout', () => {
-        req.destroy()
-        retry()
-      })
-    }
-    const retry = () => {
-      if (Date.now() > deadline) {
-        resolve(false)
-        return
-      }
-      setTimeout(attempt, 250)
-    }
-    attempt()
-  })
-}
-
-export function readOmoWsToken(): string | null {
-  try {
-    return fs.readFileSync(TOKEN_PATH, 'utf8').trim() || null
-  } catch {
-    return null
-  }
+export function getOmoHostArgs(): string[] {
+  return ['--mode', 'rpc', '--multi-session', '--session-runtime', 'in-process']
 }
 
 export async function ensureOmoServer(): Promise<OmoServerInfo | Error> {
-  if (server) return server
+  if (server && connection && !connection.isClosed) return server
   if (starting) return starting
 
   starting = (async (): Promise<OmoServerInfo | Error> => {
-    const port = await getFreePort()
-    logger.log(`[OMO SERVER] Spawning omo app-server on ${DEFAULT_HOSTNAME}:${port}`)
+    const bin = getOmoBinary()
+    const args = getOmoHostArgs()
+    logger.log(`[OMO SERVER] Spawning ${bin} ${args.join(' ')}`)
 
-    const proc = spawn('omo', ['app-server', '--listen', `ws://${DEFAULT_HOSTNAME}:${port}`], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+    // A stdio host has no per-connection identity, so client capabilities
+    // come from the environment (senpi reads it under omo's OMO_ prefix).
+    const clientCapabilities = 'question'
+    const proc = spawn(bin, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        OMO_RPC_CLIENT_CAPABILITIES: clientCapabilities,
+        SENPI_RPC_CLIENT_CAPABILITIES: clientCapabilities,
+      },
     })
     child = proc
 
     let stderrTail = ''
-    proc.stderr?.on('data', (chunk) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-4000)
-    })
-    proc.on('exit', (code) => {
-      logger.warn(`[OMO SERVER] app-server exited with code ${code}`)
-      if (server?.pid === proc.pid) server = null
-      child = null
-      emit({ type: 'stopped' })
+    proc.stderr?.setEncoding('utf8')
+    proc.stderr?.on('data', (chunk: string) => {
+      stderrTail = (stderrTail + chunk).slice(-4000)
+      for (const line of chunk.split('\n')) {
+        if (line.trim()) logger.log(`[OMO HOST] ${line.slice(0, 500)}`)
+      }
     })
 
-    const ready = await waitForReady(port, 30_000)
-    if (!ready) {
+    const spawnError = await new Promise<Error | null>((resolve) => {
+      proc.once('error', (err) => resolve(err))
+      proc.once('spawn', () => resolve(null))
+    })
+    if (spawnError) {
+      child = null
+      return new Error(
+        `Failed to start omo (${bin}): ${spawnError.message}. Install omo with: curl -fsSL https://get.omo.dev/install.sh | bash`,
+      )
+    }
+
+    const conn = new OmoRpcConnection(proc)
+    conn.onClose((reason) => {
+      logger.warn(`[OMO SERVER] ${reason}`)
+      if (connection === conn) {
+        connection = null
+        server = null
+        child = null
+        emit({ type: 'stopped' })
+      }
+    })
+
+    const info = await conn.call('get_protocol_info', {}, { timeoutMs: STARTUP_TIMEOUT_MS })
+      .catch((e: Error) => e)
+    if (info instanceof Error) {
       try {
         proc.kill('SIGTERM')
       } catch {}
-      return new Error(`omo app-server did not become ready on port ${port}. stderr: ${stderrTail.slice(-500)}`)
+      return new Error(`omo rpc host did not start: ${info.message}. stderr: ${stderrTail.slice(-500)}`)
+    }
+    const capabilities: string[] = Array.isArray(info.capabilities) ? info.capabilities : []
+    if (!capabilities.includes('multi_session')) {
+      try {
+        proc.kill('SIGTERM')
+      } catch {}
+      return new Error(
+        `omo ${info.serverVersion ?? 'unknown'} does not support multi-session RPC. Update omo with: omo update`,
+      )
     }
 
-    const token = readOmoWsToken()
-    if (!token) {
-      return new Error('omo app-server ready but ws-token file missing')
+    for (const hook of connectionSetupHooks) {
+      await Promise.resolve(hook(conn)).catch((e) => {
+        logger.warn('[OMO SERVER] connection setup hook failed:', e)
+      })
     }
 
-    server = { port, hostname: DEFAULT_HOSTNAME, pid: proc.pid ?? null, spawnedByUs: true }
-    emit({ type: 'started', port })
-    logger.log(`[OMO SERVER] app-server ready on port ${port} (pid ${proc.pid})`)
+    connection = conn
+    server = {
+      pid: proc.pid ?? null,
+      spawnedByUs: true,
+      serverVersion: info.serverVersion,
+      capabilities,
+    }
+    emit({ type: 'started', port: 0 })
+    logger.log(`[OMO SERVER] rpc host ready (engine ${info.serverVersion}, pid ${proc.pid})`)
     return server
   })()
 
@@ -147,28 +149,32 @@ export async function ensureOmoServer(): Promise<OmoServerInfo | Error> {
   return result
 }
 
+/** Running host connection, starting the host when needed. */
+export async function getOmoConnection(): Promise<OmoRpcConnection | Error> {
+  const result = await ensureOmoServer()
+  if (result instanceof Error) return result
+  if (!connection) return new Error('omo rpc host is not running')
+  return connection
+}
+
 export function getOmoServerInfo(): OmoServerInfo | null {
   return server
 }
 
-export function getOmoServerWsUrl(): string | null {
-  if (!server) return null
-  return `ws://${server.hostname}:${server.port}/`
-}
-
 export async function stopOmoServer(): Promise<boolean> {
-  if (!child) {
-    server = null
-    return true
-  }
   const proc = child
+  server = null
+  connection = null
+  child = null
+  if (!proc || proc.exitCode !== null) return true
+  emit({ type: 'stopped' })
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       try {
         proc.kill('SIGKILL')
       } catch {}
       resolve(true)
-    }, 5000)
+    }, 10_000)
     proc.once('exit', () => {
       clearTimeout(timer)
       resolve(true)
@@ -179,8 +185,6 @@ export async function stopOmoServer(): Promise<boolean> {
       clearTimeout(timer)
       resolve(true)
     }
-    server = null
-    child = null
   })
 }
 

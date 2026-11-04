@@ -147,7 +147,7 @@ async function runEventLoop() {
     while (!disposed) {
         controller = new AbortController();
         const signal = controller.signal;
-        const baseUrl = isOmoEngine() ? 'omo://app-server' : getBaseUrl();
+        const baseUrl = isOmoEngine() ? 'omo://rpc' : getBaseUrl();
         if (!baseUrl) {
             if (callbacks.size === 0) {
                 logger.log('[GLOBAL LISTENER] No registrations, pausing');
