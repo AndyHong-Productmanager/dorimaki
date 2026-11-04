@@ -21,6 +21,8 @@ export type OmoServerInfo = {
   spawnedByUs: boolean
   serverVersion: string | undefined
   capabilities: string[]
+  /** omo's agent directory (settings.json, auth.json), from get_protocol_info. */
+  agentDir: string | undefined
 }
 
 type LifecycleEvent = { type: 'started'; port: number } | { type: 'stopped' }
@@ -138,6 +140,7 @@ export async function ensureOmoServer(): Promise<OmoServerInfo | Error> {
       spawnedByUs: true,
       serverVersion: info.serverVersion,
       capabilities,
+      agentDir: typeof info.agentDir === 'string' ? info.agentDir : undefined,
     }
     emit({ type: 'started', port: 0 })
     logger.log(`[OMO SERVER] rpc host ready (engine ${info.serverVersion}, pid ${proc.pid})`)

@@ -112,6 +112,7 @@ export async function ensureOmoServer() {
             spawnedByUs: true,
             serverVersion: info.serverVersion,
             capabilities,
+            agentDir: typeof info.agentDir === 'string' ? info.agentDir : undefined,
         };
         emit({ type: 'started', port: 0 });
         logger.log(`[OMO SERVER] rpc host ready (engine ${info.serverVersion}, pid ${proc.pid})`);
