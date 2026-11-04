@@ -311,7 +311,7 @@ export async function handleVariantScopeSelectMenu(interaction) {
 async function applyVariant({ interaction, context, variant, scope, contextHash, }) {
     const modelId = context.modelId;
     const variantSuffix = variant ? ` (${variant})` : '';
-    const agentTip = '\n_Tip: create [agent .md files](https://DORIMAKIDOTDEV/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_';
+    const agentTip = '\n_Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_';
     try {
         if (scope === 'session') {
             if (!context.sessionId) {

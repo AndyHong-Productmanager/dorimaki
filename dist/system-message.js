@@ -24,7 +24,7 @@ import { FilesystemOperationError } from './errors.js';
  */
 export const SESSION_SYSTEM_PROMPT_DIR = 'session-system-pinned';
 /** Stable marker present in every dorimaki system prompt; used by tests and plugins. */
-export const DORIMAKI_SYSTEM_PROMPT_MARKER = 'via DORIMAKIDOTDEV';
+export const DORIMAKI_SYSTEM_PROMPT_MARKER = 'via kimaki.dev';
 export function getSessionSystemPromptPath({ sessionId, dataDir = getDataDir(), }) {
     return path.join(dataDir, SESSION_SYSTEM_PROMPT_DIR, `${sessionId}.txt`);
 }
@@ -304,7 +304,7 @@ export function getOpencodeSystemMessage({ sessionId, channelId, guildId, thread
         ? `\n${getParentSessionInstructions(parentSessionId)}`
         : '';
     return `
-The user is reading your messages from inside Discord, via DORIMAKIDOTDEV
+The user is reading your messages from inside Discord, via kimaki.dev
 
 ## Discord output
 
@@ -356,7 +356,7 @@ Do not restart the bot unless the user explicitly asks for it.
 
 ## debugging dorimaki issues
 
-ALWAYS read https://DORIMAKIDOTDEV/docs/guides/report-bugs first before submitting any issue to Dorimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/dorimaki unless remorses asked for one in a comment on the issue.
+ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Dorimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/dorimaki unless remorses asked for one in a comment on the issue.
 If there are internal dorimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${getDataDir()}/dorimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
 ## uploading files to discord

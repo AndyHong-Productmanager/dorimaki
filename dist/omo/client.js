@@ -1,220 +1,295 @@
-// OpencodeClient-shaped adapter backed by the omo app-server (Codex
-// app-server JSON-RPC protocol). Lets dorimaki's Discord runtime keep its
+// OpencodeClient-shaped adapter backed by an omo multi-session RPC host
+// (`omo --mode rpc --multi-session`). Lets dorimaki's Discord runtime keep its
 // existing SDK call surface while the engine underneath is omo.
 //
 // Mapping highlights:
-//   session.create      -> thread/start    (cwd + model)
-//   session.promptAsync -> turn/start      (text parts -> input blocks)
-//   session.abort       -> turn/interrupt
-//   session.messages    -> thread/resume   (turns[].items[] -> info+parts)
-//   permission.reply    -> JSON-RPC result for a pending server request
-//   question.reply      -> JSON-RPC result for a pending server request
-//   global.event        -> async generator over translated notifications
+//   session.create      -> open_session (new transcript under ~/.dorimaki/omo-sessions)
+//   session.promptAsync -> prompt (set_model first when the model changed)
+//   session.abort       -> abort
+//   session.messages    -> get_messages (AgentMessages -> info + parts)
+//   session.summarize   -> compact
+//   permission.reply    -> extension_ui_response for a "Permission required" select
+//   question.reply      -> extension_ui_response for question/select/confirm dialogs
+//   global.event        -> async generator over translated event records
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createLogger, LogPrefix } from '../logger.js';
-import { OmoRpcConnection } from './rpc.js';
-import { translateOmoNotification } from './events.js';
-import { ensureOmoServer, getOmoServerWsUrl, readOmoWsToken, subscribeOmoServerLifecycle, } from './server.js';
+import { clearOmoCatalog, getDefaultModelId, getModelCatalog, getSupportedThinkingLevels, listCommands, listProviders, } from './catalog.js';
+import { OmoSessionTranslator } from './events.js';
+import { newSessionId } from './ids.js';
+import { agentMessagesToOpencode } from './messages.js';
+import { OmoRpcError } from './rpc.js';
+import { getOmoConnection, onOmoConnectionReady, subscribeOmoServerLifecycle } from './server.js';
+import { callSession, createSession, deleteSessionFiles, forgetAllSessions, forgetControlSessions, forgetHandle, getLiveSession, listSessionMetas, modelRefFromState, openSession, readSessionMeta, sessionIdForHandle, setLiveModel, updateSessionTitle, } from './sessions.js';
+import { permissionResponse, questionResponse, translateUiRequest, } from './ui-requests.js';
 const logger = createLogger(LogPrefix.OPENCODE);
-// ── Shared connection ──────────────────────────────────────────
-let connection = null;
-let initialized = false;
-let initializing = null;
 const eventCallbacks = new Set();
+const translators = new Map();
 const sessionStatus = new Map();
-const sessionModels = new Map();
-const sessionSystems = new Map();
-const activeTurns = new Map(); // threadId -> turnId
-const pendingServerRequests = new Map();
-async function getConnection() {
-    const serverResult = await ensureOmoServer();
-    if (serverResult instanceof Error)
-        return serverResult;
-    if (connection && initialized)
-        return connection;
-    if (initializing) {
-        const r = await initializing;
-        if (r instanceof Error)
-            return r;
-        return connection;
-    }
-    initializing = (async () => {
-        const url = getOmoServerWsUrl();
-        const token = readOmoWsToken();
-        if (!url || !token)
-            return new Error('omo app-server url/token unavailable');
-        const conn = new OmoRpcConnection(url, token);
-        conn.onNotification((n) => {
-            for (const ev of translateOmoNotification(n)) {
-                if (ev.type === 'session.status' && ev.properties.sessionID) {
-                    sessionStatus.set(ev.properties.sessionID, ev.properties.status);
-                }
-                if (ev.type === 'session.idle' && ev.properties.sessionID) {
-                    sessionStatus.set(ev.properties.sessionID, { type: 'idle' });
-                    activeTurns.delete(ev.properties.sessionID);
-                }
-                for (const cb of eventCallbacks)
-                    cb({ payload: ev });
-            }
-        });
-        conn.onServerRequest(async (req) => handleServerRequest(req));
-        conn.onClose(() => {
-            initialized = false;
-            connection = null;
-            for (const cb of eventCallbacks) {
-                cb({ payload: { type: 'server.connected', properties: {} } });
-            }
-        });
-        try {
-            await conn.connect();
-            await conn.call('initialize', {
-                clientInfo: { name: 'dorimaki', version: '0.1.0' },
-            });
-        }
-        catch (e) {
-            return e instanceof Error ? e : new Error(String(e));
-        }
-        connection = conn;
-        initialized = true;
-        logger.log('[OMO CLIENT] connected and initialized');
-        return true;
-    })();
-    const r = await initializing;
-    initializing = null;
-    if (r instanceof Error)
-        return r;
-    return connection;
-}
-subscribeOmoServerLifecycle((event) => {
-    if (event.type === 'started') {
-        initialized = false;
-        connection = null;
-    }
-});
-// ── Server-initiated requests (approvals / questions) ─────────
-let nextRequestNum = 0;
-async function handleServerRequest(req) {
-    const isQuestion = /requestUserInput|question/i.test(req.method);
-    const isApproval = /approval|permission|elicitation/i.test(req.method);
-    if (!isQuestion && !isApproval) {
-        logger.log(`[OMO CLIENT] unhandled server request ${req.method}, auto-approving with empty result`);
-        return {};
-    }
-    const requestID = `omo-req-${req.rpcId}-${++nextRequestNum}`;
-    const threadId = req.params.threadId ?? req.params.thread_id ?? '';
-    return new Promise((resolve) => {
-        pendingServerRequests.set(requestID, { ...req, respond: resolve });
-        if (isQuestion) {
-            const questions = req.params.questions ?? [{
-                    id: 'q1',
-                    header: req.params.title ?? 'Question',
-                    question: req.params.prompt ?? req.params.message ?? JSON.stringify(req.params),
-                    options: req.params.options ?? [],
-                }];
-            emitToAll({
-                type: 'question.asked',
-                properties: {
-                    id: requestID,
-                    sessionID: threadId,
-                    questions,
-                    tool: req.params.tool ? { messageID: '', callID: '' } : undefined,
-                },
-            });
-        }
-        else {
-            emitToAll({
-                type: 'permission.asked',
-                properties: {
-                    id: requestID,
-                    sessionID: threadId,
-                    permission: req.method,
-                    patterns: req.params.patterns ?? [],
-                    metadata: req.params,
-                    always: [],
-                    tool: undefined,
-                },
-            });
-        }
-    });
-}
+const pendingUi = new Map();
+const injectedSystemPrompts = new Map();
 function emitToAll(event) {
+    if (event.type === 'session.status' && event.properties.sessionID) {
+        sessionStatus.set(event.properties.sessionID, event.properties.status);
+    }
+    if (event.type === 'session.idle' && event.properties.sessionID) {
+        sessionStatus.set(event.properties.sessionID, { type: 'idle' });
+    }
     for (const cb of eventCallbacks)
         cb({ payload: event });
 }
-function replyToServerRequest(requestID, result) {
-    const pending = pendingServerRequests.get(requestID);
-    if (!pending)
-        return false;
-    pendingServerRequests.delete(requestID);
-    pending.respond(result);
-    return true;
+function getTranslator(sessionID) {
+    let translator = translators.get(sessionID);
+    if (!translator) {
+        const cwd = getLiveSession(sessionID)?.cwd ?? readSessionMeta(sessionID)?.cwd ?? '';
+        translator = new OmoSessionTranslator(sessionID, cwd);
+        translators.set(sessionID, translator);
+    }
+    return translator;
 }
-// ── Helpers ────────────────────────────────────────────────────
-function splitItemId(itemId) {
-    const idx = itemId.lastIndexOf(':');
-    return { messageId: idx === -1 ? itemId : itemId.slice(0, idx) };
-}
-function threadToSession(thread) {
+function metaToSession(meta) {
     return {
-        id: thread.id,
-        directory: thread.cwd,
-        title: thread.name ?? thread.preview ?? '',
-        time: {
-            created: (thread.createdAt ?? 0) * 1000,
-            updated: (thread.updatedAt ?? 0) * 1000,
-        },
+        id: meta.id,
+        slug: meta.id,
+        projectID: 'omo',
+        directory: meta.cwd,
+        title: meta.title,
+        version: 'omo',
+        time: { created: meta.created, updated: meta.updated },
     };
 }
-function threadToMessages(thread) {
-    const messages = new Map();
-    for (const turn of thread.turns ?? []) {
-        for (const item of turn.items ?? []) {
-            const { messageId } = splitItemId(item.id ?? '');
-            if (!messages.has(messageId)) {
-                messages.set(messageId, {
-                    info: {
-                        id: messageId,
-                        sessionID: thread.id,
-                        role: item.type === 'userMessage' ? 'user' : 'assistant',
-                        time: { created: item.startedAtMs ?? turn.startedAt ?? Date.now() },
-                    },
-                    parts: [],
-                });
+function handleRecord(record) {
+    if (record.type === 'session_closed' || record.type === 'session_parked') {
+        if (record.sessionId)
+            forgetHandle(record.sessionId);
+        return;
+    }
+    const sessionID = sessionIdForHandle(record.sessionId);
+    if (!sessionID)
+        return;
+    switch (record.type) {
+        case 'model_changed':
+            setLiveModel(sessionID, modelRefFromState(record.model));
+            return;
+        case 'session_info_changed': {
+            const meta = updateSessionTitle(sessionID, String(record.name ?? ''));
+            if (meta)
+                emitToAll({ type: 'session.updated', properties: { info: metaToSession(meta) } });
+            return;
+        }
+        case 'extension_ui_request':
+            handleUiRequest(sessionID, record);
+            return;
+        case 'question_resolved': {
+            const requestID = `que_${record.id}`;
+            if (pendingUi.delete(requestID)) {
+                emitToAll({ type: 'question.replied', properties: { sessionID, requestID, answers: [] } });
             }
-            const msg = messages.get(messageId);
-            if (item.type === 'userMessage') {
-                const text = (item.content ?? []).map((c) => c.text ?? '').join('\n');
-                msg.parts.push({ id: `part_${item.id}`, sessionID: thread.id, messageID: messageId, type: 'text', text });
-            }
-            else if (item.type === 'agentMessage') {
-                msg.parts.push({ id: `part_${item.id}`, sessionID: thread.id, messageID: messageId, type: 'text', text: item.text ?? '' });
-            }
-            else if (item.type === 'reasoning') {
-                msg.parts.push({
-                    id: `part_${item.id}`,
-                    sessionID: thread.id,
-                    messageID: messageId,
-                    type: 'reasoning',
-                    text: Array.isArray(item.content) ? item.content.join('\n') : '',
-                });
-            }
-            else if (item.type === 'dynamicToolCall' || item.type === 'toolCall') {
-                msg.parts.push({
-                    id: `part_${item.id}`,
-                    sessionID: thread.id,
-                    messageID: messageId,
-                    type: 'tool',
-                    tool: item.tool ?? 'unknown',
-                    callID: item.id,
-                    state: { status: 'completed', input: item.arguments ?? {}, output: '', time: { start: 0 } },
-                });
+            return;
+        }
+        default:
+            for (const event of getTranslator(sessionID).translate(record))
+                emitToAll(event);
+    }
+}
+function handleUiRequest(sessionID, record) {
+    const translation = translateUiRequest({
+        record,
+        sessionID,
+        toolMessageId: (toolCallId) => getTranslator(sessionID).messageIdForTool(toolCallId),
+    });
+    switch (translation.kind) {
+        case 'event':
+            pendingUi.set(translation.pending.requestID, translation.pending);
+            emitToAll(translation.event);
+            return;
+        case 'toast':
+            emitToAll(translation.event);
+            return;
+        case 'cancel':
+            logger.log(`[OMO CLIENT] cancelling ${record.method} dialog: ${translation.reason}`);
+            void callSession(sessionID, 'extension_ui_response', { uiRequestId: record.id, cancelled: true })
+                .catch((e) => logger.warn('[OMO CLIENT] failed to cancel dialog:', e));
+            return;
+        case 'ignore':
+            return;
+    }
+}
+async function answerUiRequest(pending, response) {
+    await callSession(pending.sessionID, 'extension_ui_response', {
+        uiRequestId: pending.uiRequestId,
+        ...response,
+    });
+}
+onOmoConnectionReady(async (conn) => {
+    conn.onRecord(handleRecord);
+    await conn.call('set_client_info', { capabilities: ['question'] });
+});
+function getConnection() {
+    return getOmoConnection();
+}
+subscribeOmoServerLifecycle((event) => {
+    if (event.type !== 'stopped')
+        return;
+    forgetControlSessions();
+    clearOmoCatalog();
+    pendingUi.clear();
+    for (const sessionID of forgetAllSessions()) {
+        if (sessionStatus.get(sessionID)?.type === 'idle')
+            continue;
+        emitToAll({
+            type: 'session.error',
+            properties: { sessionID, error: { name: 'UnknownError', data: { message: 'omo engine stopped' } } },
+        });
+        emitToAll({ type: 'session.status', properties: { sessionID, status: { type: 'idle' } } });
+        emitToAll({ type: 'session.idle', properties: { sessionID } });
+    }
+    translators.clear();
+});
+// ── Prompt helpers ─────────────────────────────────────────────
+function parseModel(model) {
+    if (!model)
+        return undefined;
+    if (typeof model === 'string') {
+        const slash = model.indexOf('/');
+        if (slash <= 0)
+            return undefined;
+        return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
+    }
+    const m = model;
+    if (typeof m.providerID === 'string' && typeof m.modelID === 'string') {
+        return { provider: m.providerID, id: m.modelID };
+    }
+    return undefined;
+}
+function imageFromFilePart(part) {
+    const mime = part.mime ?? '';
+    const url = part.url ?? '';
+    if (!mime.startsWith('image/') || !url)
+        return undefined;
+    const dataMatch = url.match(/^data:([^;,]+)?;base64,(.*)$/s);
+    if (dataMatch)
+        return { type: 'image', data: dataMatch[2], mimeType: dataMatch[1] || mime };
+    const filePath = url.startsWith('file://') ? fileURLToPath(url) : url.startsWith('/') ? url : undefined;
+    if (!filePath)
+        return undefined;
+    try {
+        return { type: 'image', data: fs.readFileSync(filePath).toString('base64'), mimeType: mime };
+    }
+    catch {
+        return undefined;
+    }
+}
+function buildPromptInput(sessionID, params) {
+    const texts = [];
+    const images = [];
+    const context = [];
+    // omo has no per-turn system prompt. dorimaki's system message is sent as a
+    // hidden custom message whenever it changes for this session.
+    const system = typeof params.system === 'string' && params.system.trim()
+        ? params.system
+        : undefined;
+    if (system && injectedSystemPrompts.get(sessionID) !== system) {
+        injectedSystemPrompts.set(sessionID, system);
+        context.push(`<system-reminder>\n${system}\n</system-reminder>`);
+    }
+    for (const part of params.parts ?? []) {
+        if (part?.type === 'text' && part.text) {
+            if (part.synthetic === true)
+                context.push(part.text);
+            else
+                texts.push(part.text);
+        }
+        if (part?.type === 'file') {
+            const image = imageFromFilePart(part);
+            if (image)
+                images.push(image);
+            else if (part.url && !String(part.url).startsWith('data:')) {
+                texts.push(`[Attached file: ${part.filename ?? 'file'} at ${part.url}]`);
             }
         }
     }
-    return [...messages.values()];
+    return { message: texts.join('\n\n'), images, context };
+}
+async function sendContext(sessionID, context) {
+    if (context.length === 0)
+        return;
+    await callSession(sessionID, 'send_custom_message', {
+        customType: 'dorimaki-context',
+        content: context.join('\n\n'),
+        display: false,
+        triggerTurn: false,
+        deliverAs: 'nextTurn',
+    });
+}
+async function ensureModel(sessionID, model) {
+    if (!model)
+        return;
+    const session = await openSession({ id: sessionID });
+    if (session instanceof Error)
+        throw session;
+    if (session.model?.provider === model.provider && session.model.id === model.id)
+        return;
+    const data = await callSession(sessionID, 'set_model', { provider: model.provider, modelId: model.id });
+    setLiveModel(sessionID, modelRefFromState(data) ?? model);
+}
+async function sendPrompt(sessionID, payload) {
+    const busy = sessionStatus.get(sessionID)?.type === 'busy';
+    try {
+        return await callSession(sessionID, 'prompt', busy ? { ...payload, streamingBehavior: 'followUp' } : payload);
+    }
+    catch (e) {
+        if (!busy && e instanceof OmoRpcError && e.code === 'streaming') {
+            return callSession(sessionID, 'prompt', { ...payload, streamingBehavior: 'followUp' });
+        }
+        throw e;
+    }
+}
+async function promptSession(params) {
+    const conn = await getConnection();
+    if (conn instanceof Error)
+        return { error: conn };
+    const sessionID = params.sessionID;
+    try {
+        const { message, images, context } = buildPromptInput(sessionID, params);
+        if (params.noReply) {
+            await callSession(sessionID, 'append_user_message', { content: message });
+            return { data: {} };
+        }
+        const model = parseModel(params.model);
+        await ensureModel(sessionID, model);
+        await sendContext(sessionID, context);
+        if (model)
+            await getModelCatalog().catch(() => undefined);
+        const variant = typeof params.variant === 'string' ? params.variant : undefined;
+        const thinkingLevel = model && variant && getSupportedThinkingLevels(model).includes(variant)
+            ? variant
+            : undefined;
+        const result = await sendPrompt(sessionID, {
+            message,
+            ...(images.length > 0 ? { images } : {}),
+            ...(thinkingLevel ? { thinkingLevel } : {}),
+        });
+        // Extension commands such as /efforts run without starting a turn.
+        // dorimaki still waits for an idle event to stop typing, so send one.
+        if (result?.disposition === 'handled' && sessionStatus.get(sessionID)?.type !== 'busy') {
+            emitToAll({ type: 'session.status', properties: { sessionID, status: { type: 'idle' } } });
+            emitToAll({ type: 'session.idle', properties: { sessionID } });
+            return { data: {} };
+        }
+        sessionStatus.set(sessionID, { type: 'busy' });
+        return { data: {} };
+    }
+    catch (e) {
+        return { error: e };
+    }
 }
 /** Engine switch: dorimaki defaults to omo; set DORIMAKI_ENGINE=opencode for the legacy path. */
 export function isOmoEngine() {
     return process.env.DORIMAKI_ENGINE !== 'opencode';
+}
+function notSupported(operation) {
+    return async () => ({ error: new Error(`${operation} is not supported by the omo engine`) });
 }
 export function createOmoClient({ directory }) {
     const session = {
@@ -222,182 +297,248 @@ export function createOmoClient({ directory }) {
             const conn = await getConnection();
             if (conn instanceof Error)
                 return { error: conn };
-            const model = params?.model
-                ? `${params.model.providerID}/${params.model.modelID}`
-                : sessionModels.get(directory);
-            try {
-                const result = await conn.call('thread/start', {
-                    cwd: params?.directory ?? directory,
-                    ...(model ? { model } : {}),
-                    approvalPolicy: 'on-request',
-                });
-                const thread = result.thread;
-                if (model)
-                    sessionModels.set(thread.id, model);
-                sessionStatus.set(thread.id, { type: 'idle' });
-                return { data: threadToSession(thread) };
+            const cwd = params?.directory || directory;
+            const id = newSessionId();
+            const created = await createSession({ id, cwd, model: parseModel(params?.model) });
+            if (created instanceof Error) {
+                deleteSessionFiles(id);
+                return { error: created };
             }
-            catch (e) {
-                return { error: e };
-            }
+            sessionStatus.set(id, { type: 'idle' });
+            const meta = readSessionMeta(id);
+            return meta ? { data: metaToSession(meta) } : { error: new Error(`Session not found: ${id}`) };
         },
         async get({ sessionID }) {
-            const conn = await getConnection();
-            if (conn instanceof Error)
-                return { error: conn };
-            try {
-                const result = await conn.call('thread/resume', { threadId: sessionID });
-                return { data: threadToSession(result.thread) };
-            }
-            catch (e) {
-                return { error: e };
-            }
+            const meta = readSessionMeta(sessionID);
+            if (!meta)
+                return { error: new Error(`Session not found: ${sessionID}`) };
+            return { data: metaToSession(meta) };
         },
         async list() {
-            const conn = await getConnection();
-            if (conn instanceof Error)
-                return { error: conn };
-            try {
-                const result = await conn.call('thread/list', {});
-                const threads = (result.data ?? result.threads ?? []);
-                return { data: threads.map(threadToSession) };
-            }
-            catch (e) {
-                return { error: e };
-            }
+            return { data: listSessionMetas().map(metaToSession) };
         },
-        async messages({ sessionID }) {
+        async messages({ sessionID, limit }) {
             const conn = await getConnection();
             if (conn instanceof Error)
                 return { error: conn };
+            const meta = readSessionMeta(sessionID);
+            if (!meta)
+                return { error: new Error(`Session not found: ${sessionID}`) };
             try {
-                const result = await conn.call('thread/resume', { threadId: sessionID });
-                return { data: threadToMessages(result.thread) };
+                const data = await callSession(sessionID, 'get_messages');
+                const messages = agentMessagesToOpencode({
+                    sessionID,
+                    messages: Array.isArray(data?.messages) ? data.messages : [],
+                    cwd: meta.cwd,
+                });
+                return { data: typeof limit === 'number' && limit > 0 ? messages.slice(-limit) : messages };
             }
             catch (e) {
                 return { error: e };
             }
         },
         async status() {
-            await getConnection();
-            return { data: Object.fromEntries(sessionStatus) };
+            const busy = [...sessionStatus.entries()].filter(([, status]) => status.type !== 'idle');
+            return { data: Object.fromEntries(busy) };
         },
-        async promptAsync(params) {
-            const conn = await getConnection();
-            if (conn instanceof Error)
-                return { error: conn };
-            const sessionID = params.sessionID;
-            const texts = [];
-            for (const part of params.parts ?? []) {
-                if (part.type === 'text' && part.text)
-                    texts.push(part.text);
+        promptAsync: promptSession,
+        async command(params) {
+            const args = typeof params.arguments === 'string' ? params.arguments : '';
+            const commandText = (name) => `/${name}${args ? ` ${args}` : ''}`;
+            const prompt = (name) => promptSession({
+                ...params,
+                parts: [{ type: 'text', text: commandText(name) }],
+            });
+            const first = await prompt(params.command);
+            if (first.error instanceof OmoRpcError && first.error.code === 'unknown_command') {
+                return prompt(`skill:${params.command}`);
             }
-            // Interim: omo app-server has no per-turn system prompt; prepend the
-            // dorimaki system message to the first turn as a reminder block.
-            const system = params.system ?? sessionSystems.get(sessionID);
-            if (params.system)
-                sessionSystems.set(sessionID, params.system);
-            let inputText = texts.join('\n\n');
-            if (system && !sessionSystems.has(`${sessionID}:injected`)) {
-                sessionSystems.set(`${sessionID}:injected`, '1');
-                inputText = `<system-reminder>\n${system}\n</system-reminder>\n\n${inputText}`;
-            }
-            if (params.model) {
-                sessionModels.set(sessionID, `${params.model.providerID}/${params.model.modelID}`);
-            }
-            try {
-                const result = await conn.call('turn/start', {
-                    threadId: sessionID,
-                    input: [{ type: 'text', text: inputText }],
-                });
-                if (result.turn?.id)
-                    activeTurns.set(sessionID, result.turn.id);
-                sessionStatus.set(sessionID, { type: 'busy' });
-                return { data: {} };
-            }
-            catch (e) {
-                return { error: e };
-            }
+            return first;
         },
         async abort({ sessionID }) {
-            const conn = await getConnection();
-            if (conn instanceof Error)
-                return { error: conn };
-            const turnId = activeTurns.get(sessionID);
+            if (!getLiveSession(sessionID))
+                return { data: true };
             try {
-                await conn.call('turn/interrupt', { threadId: sessionID, ...(turnId ? { turnId } : {}) });
+                await callSession(sessionID, 'abort');
                 return { data: true };
             }
             catch (e) {
                 return { error: e };
             }
         },
-        async update({ sessionID, ...rest }) {
-            // omo has no thread rename/model patch RPC verified yet; keep local state.
-            if (rest.model)
-                sessionModels.set(sessionID, `${rest.model.providerID}/${rest.model.modelID}`);
-            return { data: { id: sessionID } };
+        async update({ sessionID, title }) {
+            const meta = readSessionMeta(sessionID);
+            if (!meta)
+                return { error: new Error(`Session not found: ${sessionID}`) };
+            if (typeof title === 'string' && title.trim()) {
+                try {
+                    await callSession(sessionID, 'set_session_name', { name: title });
+                }
+                catch (e) {
+                    return { error: e };
+                }
+                return { data: metaToSession(updateSessionTitle(sessionID, title) ?? meta) };
+            }
+            return { data: metaToSession(meta) };
         },
         async delete({ sessionID }) {
-            const conn = await getConnection();
-            if (conn instanceof Error)
-                return { error: conn };
+            const live = getLiveSession(sessionID);
+            if (live) {
+                await live.conn.call('close_session', { sessionId: live.handle }).catch(() => undefined);
+                forgetHandle(live.handle);
+            }
+            deleteSessionFiles(sessionID);
+            translators.delete(sessionID);
+            sessionStatus.delete(sessionID);
+            injectedSystemPrompts.delete(sessionID);
+            return { data: true };
+        },
+        async summarize({ sessionID }) {
             try {
-                await conn.call('thread/archive', { threadId: sessionID });
-                sessionStatus.delete(sessionID);
+                await callSession(sessionID, 'compact', {}, { timeoutMs: 30 * 60_000 });
                 return { data: true };
             }
             catch (e) {
                 return { error: e };
             }
         },
-        async summarize() {
-            return { error: new Error('summarize not yet implemented for omo engine') };
-        },
-        async revert() {
-            return { error: new Error('revert not supported by omo engine') };
-        },
-        async unrevert() {
-            return { error: new Error('unrevert not supported by omo engine') };
-        },
+        revert: notSupported('revert'),
+        unrevert: notSupported('unrevert'),
+        fork: notSupported('fork'),
+        share: notSupported('share'),
+        trim: notSupported('trim'),
+        sendRealtimeInput: notSupported('realtime input'),
     };
     const permission = {
         async reply({ requestID, reply }) {
-            const ok = replyToServerRequest(requestID, { decision: reply === 'reject' ? 'deny' : 'allow' });
-            if (!ok)
+            const pending = pendingUi.get(requestID);
+            if (!pending || pending.kind !== 'permission') {
                 return { error: new Error(`unknown permission request ${requestID}`) };
-            emitToAll({ type: 'permission.replied', properties: { requestID, reply } });
-            return { data: true };
-        },
-    };
-    const question = {
-        async reply({ requestID, answers }) {
-            const ok = replyToServerRequest(requestID, { answers });
-            if (!ok)
-                return { error: new Error(`unknown question request ${requestID}`) };
-            emitToAll({ type: 'question.replied', properties: { requestID, answers } });
-            return { data: true };
-        },
-        async reject({ requestID }) {
-            const ok = replyToServerRequest(requestID, { rejected: true });
-            if (!ok)
-                return { error: new Error(`unknown question request ${requestID}`) };
-            emitToAll({ type: 'question.rejected', properties: { requestID } });
+            }
+            pendingUi.delete(requestID);
+            try {
+                await answerUiRequest(pending, permissionResponse(pending, reply));
+            }
+            catch (e) {
+                return { error: e };
+            }
+            emitToAll({ type: 'permission.replied', properties: { sessionID: pending.sessionID, requestID, reply } });
             return { data: true };
         },
         async list() {
             return { data: [] };
         },
     };
+    const question = {
+        async reply({ requestID, answers }) {
+            const pending = pendingUi.get(requestID);
+            if (!pending || pending.kind === 'permission') {
+                return { error: new Error(`unknown question request ${requestID}`) };
+            }
+            pendingUi.delete(requestID);
+            try {
+                await answerUiRequest(pending, questionResponse(pending, Array.isArray(answers) ? answers : []));
+            }
+            catch (e) {
+                return { error: e };
+            }
+            emitToAll({ type: 'question.replied', properties: { sessionID: pending.sessionID, requestID, answers } });
+            return { data: true };
+        },
+        async reject({ requestID }) {
+            const pending = pendingUi.get(requestID);
+            if (!pending)
+                return { error: new Error(`unknown question request ${requestID}`) };
+            pendingUi.delete(requestID);
+            try {
+                await answerUiRequest(pending, { cancelled: true });
+            }
+            catch (e) {
+                return { error: e };
+            }
+            emitToAll({ type: 'question.rejected', properties: { sessionID: pending.sessionID, requestID } });
+            return { data: true };
+        },
+        async list() {
+            const questions = [...pendingUi.values()]
+                .filter((pending) => pending.kind !== 'permission')
+                .map((pending) => ({
+                id: pending.requestID,
+                sessionID: pending.sessionID,
+                questions: pending.questions,
+                ...(pending.tool ? { tool: pending.tool } : {}),
+            }));
+            return { data: questions };
+        },
+    };
     const provider = {
         async list() {
-            // TODO: query omo models-store; return empty-but-valid shape for now
-            return { data: { all: [], connected: [], default: {} } };
+            const conn = await getConnection();
+            if (conn instanceof Error)
+                return { error: conn };
+            try {
+                return { data: await listProviders() };
+            }
+            catch (e) {
+                return { error: e };
+            }
+        },
+        async auth() {
+            return { data: {} };
         },
     };
     const config = {
+        async get() {
+            const conn = await getConnection();
+            if (conn instanceof Error)
+                return { error: conn };
+            const model = await getDefaultModelId().catch(() => undefined);
+            return { data: model ? { model } : {} };
+        },
         async providers() {
-            return { data: { providers: [], default: {} } };
+            const conn = await getConnection();
+            if (conn instanceof Error)
+                return { error: conn };
+            try {
+                const { all, default: defaults } = await listProviders();
+                return { data: { providers: all, default: defaults } };
+            }
+            catch (e) {
+                return { error: e };
+            }
+        },
+    };
+    const command = {
+        async list(params) {
+            const conn = await getConnection();
+            if (conn instanceof Error)
+                return { error: conn };
+            try {
+                return { data: await listCommands(params?.directory || directory) };
+            }
+            catch (e) {
+                return { error: e };
+            }
+        },
+    };
+    const app = {
+        async agents() {
+            return { data: [] };
+        },
+    };
+    const project = {
+        async list() {
+            return { data: [] };
+        },
+    };
+    const instance = {
+        async dispose() {
+            return { data: true };
+        },
+    };
+    const find = {
+        async files() {
+            return { data: [] };
         },
     };
     const auth = {
@@ -421,36 +562,56 @@ export function createOmoClient({ directory }) {
             const conn = await getConnection();
             if (conn instanceof Error)
                 throw conn;
+            // Subscribe before returning so events emitted before the first
+            // iteration are queued instead of dropped.
+            const queue = [];
+            let notify = null;
+            const cb = (ev) => {
+                queue.push(ev);
+                notify?.();
+            };
+            eventCallbacks.add(cb);
+            const onAbort = () => {
+                eventCallbacks.delete(cb);
+                notify?.();
+            };
+            signal?.addEventListener('abort', onAbort, { once: true });
             const stream = (async function* () {
-                const queue = [];
-                let notify = null;
-                const cb = (ev) => {
-                    queue.push(ev);
-                    notify?.();
-                };
-                eventCallbacks.add(cb);
-                const onAbort = () => {
-                    eventCallbacks.delete(cb);
-                    notify?.();
-                };
-                signal?.addEventListener('abort', onAbort, { once: true });
                 try {
+                    // The event bus outlives host restarts, so the stream ends only on abort.
                     while (!signal?.aborted) {
                         while (queue.length > 0)
                             yield queue.shift();
+                        let timer;
                         await new Promise((resolve) => {
                             notify = resolve;
-                            setTimeout(resolve, 30_000);
+                            timer = setTimeout(resolve, 30_000);
                         });
+                        clearTimeout(timer);
                         notify = null;
                     }
                 }
                 finally {
                     eventCallbacks.delete(cb);
+                    signal?.removeEventListener('abort', onAbort);
                 }
             })();
             return { stream };
         },
     };
-    return { session, permission, question, provider, config, auth, mcp, global };
+    return {
+        session,
+        permission,
+        question,
+        provider,
+        config,
+        command,
+        app,
+        project,
+        instance,
+        find,
+        auth,
+        mcp,
+        global,
+    };
 }

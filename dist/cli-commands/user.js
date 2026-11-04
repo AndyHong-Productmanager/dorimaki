@@ -95,7 +95,7 @@ cli
         port,
         tunnelId: options.tunnelId || undefined,
         localHost: options.host || undefined,
-        baseDomain: 'DORIMAKIDOTDEV',
+        baseDomain: 'kimaki.dev',
         serverUrl: options.server || undefined,
         command: command.length > 0 ? command : undefined,
         kill: options.kill,

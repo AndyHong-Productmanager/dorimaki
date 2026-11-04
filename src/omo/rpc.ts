@@ -1,143 +1,168 @@
-// Low-level JSON-RPC 2.0 WebSocket client for the omo app-server
-// (Codex app-server protocol). Handles outbound calls, inbound
-// notifications, and inbound server-initiated requests (approvals,
-// questions) which must be answered with a JSON-RPC result.
+// JSONL client for an `omo --mode rpc --multi-session` host over stdio.
+//
+// Framing follows the senpi RPC contract: one JSON object per line, split on
+// LF only (never Node readline, which also splits on U+2028/U+2029).
+// Commands carry a client-owned `id`; the host answers with a
+// `{type:"response", id, command, success, data|error}` record. Everything
+// else on stdout is an event record, tagged with the routing `sessionId`.
 
-import { WebSocket } from 'ws'
+import type { ChildProcess } from 'node:child_process'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
 type Json = Record<string, any>
 
-export type RpcNotification = { method: string; params: Json }
-export type RpcServerRequest = {
-  rpcId: number | string
-  method: string
-  params: Json
+export type OmoRecord = Json & { type: string; sessionId?: string }
+
+export class OmoRpcError extends Error {
+  readonly code: string | undefined
+  readonly data: unknown
+  readonly command: string
+
+  constructor({ command, message, code, data }: {
+    command: string
+    message: string
+    code?: string
+    data?: unknown
+  }) {
+    super(`omo ${command} failed: ${message}`)
+    this.name = 'OmoRpcError'
+    this.command = command
+    this.code = code
+    this.data = data
+  }
 }
 
 type PendingCall = {
-  resolve: (value: any) => void
+  command: string
+  resolve: (data: any) => void
   reject: (err: Error) => void
+  timer: NodeJS.Timeout | undefined
 }
 
+const DEFAULT_TIMEOUT_MS = 120_000
+
 export class OmoRpcConnection {
-  private ws: WebSocket | null = null
   private nextId = 0
-  private pending = new Map<number, PendingCall>()
-  private notificationHandlers = new Set<(n: RpcNotification) => void>()
-  private requestHandlers = new Set<(r: RpcServerRequest) => Promise<any>>()
-  private closeHandlers = new Set<() => void>()
-  private connectPromise: Promise<void> | null = null
+  private buffer = ''
+  private closed = false
+  private pending = new Map<string, PendingCall>()
+  private recordHandlers = new Set<(record: OmoRecord) => void>()
+  private closeHandlers = new Set<(reason: string) => void>()
 
-  constructor(
-    private url: string,
-    private token: string,
-  ) {}
-
-  async connect(): Promise<void> {
-    if (this.connectPromise) return this.connectPromise
-    this.connectPromise = new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.url, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      })
-      this.ws = ws
-      ws.on('open', () => resolve())
-      ws.on('error', (err) => {
-        if (this.pending.size === 0 && !this.connectPromise) return
-        reject(err instanceof Error ? err : new Error(String(err)))
-      })
-      ws.on('close', () => {
-        this.ws = null
-        this.connectPromise = null
-        const err = new Error('omo app-server websocket closed')
-        for (const p of this.pending.values()) p.reject(err)
-        this.pending.clear()
-        for (const h of this.closeHandlers) h()
-      })
-      ws.on('message', (data) => this.handleMessage(data.toString()))
+  constructor(private proc: ChildProcess) {
+    proc.stdout?.setEncoding('utf8')
+    proc.stdout?.on('data', (chunk: string) => this.handleChunk(chunk))
+    proc.on('exit', (code, signal) => {
+      this.handleClose(`omo rpc host exited (code=${code}, signal=${signal})`)
     })
-    return this.connectPromise
+    proc.stdin?.on('error', (err) => {
+      this.handleClose(`omo rpc stdin error: ${err.message}`)
+    })
   }
 
-  private handleMessage(raw: string): void {
-    let msg: any
+  get isClosed(): boolean {
+    return this.closed
+  }
+
+  private handleChunk(chunk: string): void {
+    this.buffer += chunk
+    let newline = this.buffer.indexOf('\n')
+    while (newline !== -1) {
+      let line = this.buffer.slice(0, newline)
+      this.buffer = this.buffer.slice(newline + 1)
+      if (line.endsWith('\r')) line = line.slice(0, -1)
+      if (line.trim()) this.handleLine(line)
+      newline = this.buffer.indexOf('\n')
+    }
+  }
+
+  private handleLine(line: string): void {
+    let record: OmoRecord
     try {
-      msg = JSON.parse(raw)
+      record = JSON.parse(line)
     } catch {
-      logger.warn('[OMO RPC] non-JSON frame:', raw.slice(0, 200))
+      logger.warn('[OMO RPC] non-JSON line:', line.slice(0, 200))
       return
     }
-    // Server-initiated request: has id AND method
-    if (msg.id !== undefined && msg.method) {
-      void this.handleServerRequest(msg)
-      return
-    }
-    // Response to our call
-    if (msg.id !== undefined) {
-      const p = this.pending.get(msg.id)
-      if (!p) return
-      this.pending.delete(msg.id)
-      if (msg.error) {
-        p.reject(new Error(msg.error.message || JSON.stringify(msg.error)))
-      } else {
-        p.resolve(msg.result)
-      }
-      return
-    }
-    // Notification
-    if (msg.method) {
-      const n: RpcNotification = { method: msg.method, params: msg.params ?? {} }
-      for (const h of this.notificationHandlers) h(n)
-    }
-  }
+    if (!record || typeof record !== 'object') return
 
-  private async handleServerRequest(msg: any): Promise<void> {
-    const req: RpcServerRequest = { rpcId: msg.id, method: msg.method, params: msg.params ?? {} }
-    let result: any = {}
-    for (const h of this.requestHandlers) {
-      try {
-        const r = await h(req)
-        if (r !== undefined) {
-          result = r
-          break
+    if (record.type === 'response' && typeof record.id === 'string') {
+      const pending = this.pending.get(record.id)
+      if (pending) {
+        this.pending.delete(record.id)
+        if (pending.timer) clearTimeout(pending.timer)
+        if (record.success === false) {
+          pending.reject(new OmoRpcError({
+            command: record.command ?? pending.command,
+            message: String(record.error ?? 'unknown error'),
+            code: record.errorCode,
+            data: record.errorData,
+          }))
+        } else {
+          pending.resolve(record.data ?? {})
         }
-      } catch (e) {
-        logger.warn('[OMO RPC] server request handler error:', e)
+        return
       }
     }
-    this.ws?.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }))
+
+    for (const handler of this.recordHandlers) {
+      try {
+        handler(record)
+      } catch (e) {
+        logger.error('[OMO RPC] record handler threw:', e)
+      }
+    }
   }
 
-  async call(method: string, params?: Json): Promise<any> {
-    await this.connect()
-    const id = ++this.nextId
+  private handleClose(reason: string): void {
+    if (this.closed) return
+    this.closed = true
+    const err = new Error(reason)
+    for (const pending of this.pending.values()) {
+      if (pending.timer) clearTimeout(pending.timer)
+      pending.reject(err)
+    }
+    this.pending.clear()
+    for (const handler of this.closeHandlers) handler(reason)
+  }
+
+  /** Send one command and resolve with its `data`, or reject with OmoRpcError. */
+  call(
+    type: string,
+    params: Json = {},
+    { timeoutMs = DEFAULT_TIMEOUT_MS }: { timeoutMs?: number } = {},
+  ): Promise<any> {
+    if (this.closed || !this.proc.stdin?.writable) {
+      return Promise.reject(new Error('omo rpc host is not running'))
+    }
+    const id = `dorimaki-${++this.nextId}`
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      this.ws!.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: params ?? {} }))
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+            this.pending.delete(id)
+            reject(new Error(`omo ${type} timed out after ${timeoutMs}ms`))
+          }, timeoutMs)
+        : undefined
+      this.pending.set(id, { command: type, resolve, reject, timer })
+      this.proc.stdin!.write(`${JSON.stringify({ ...params, id, type })}\n`)
     })
   }
 
-  onNotification(handler: (n: RpcNotification) => void): () => void {
-    this.notificationHandlers.add(handler)
-    return () => this.notificationHandlers.delete(handler)
+  /** Fire-and-forget command (no correlation). */
+  send(type: string, params: Json = {}): void {
+    if (this.closed || !this.proc.stdin?.writable) return
+    this.proc.stdin.write(`${JSON.stringify({ ...params, type })}\n`)
   }
 
-  /** Register a handler for server-initiated requests. Return undefined to pass to next handler. */
-  onServerRequest(handler: (r: RpcServerRequest) => Promise<any>): () => void {
-    this.requestHandlers.add(handler)
-    return () => this.requestHandlers.delete(handler)
+  onRecord(handler: (record: OmoRecord) => void): () => void {
+    this.recordHandlers.add(handler)
+    return () => this.recordHandlers.delete(handler)
   }
 
-  onClose(handler: () => void): () => void {
+  onClose(handler: (reason: string) => void): () => void {
     this.closeHandlers.add(handler)
     return () => this.closeHandlers.delete(handler)
-  }
-
-  close(): void {
-    this.ws?.close()
-    this.ws = null
-    this.connectPromise = null
   }
 }

@@ -44,6 +44,12 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { OpenCodeSdkError } from '../errors.js'
 import * as errore from 'errore'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
+import { isOmoEngine } from '../omo/client.js'
+import {
+  FAVORITES_PROVIDER_VALUE,
+  getAvailableOmoFavorites,
+  parseFavorite,
+} from '../omo/favorites.js'
 
 const modelLogger = createLogger(LogPrefix.MODEL)
 
@@ -100,6 +106,29 @@ function setModelContext(contextHash: string, context: PendingModelContext): voi
   setTimeout(() => {
     pendingModelContexts.delete(contextHash)
   }, MODEL_CONTEXT_TTL_MS).unref()
+}
+
+type SelectOption = { label: string; value: string; description?: string }
+
+/** Prepend omo's favorite models as a pseudo-provider in the provider picker. */
+function withOmoFavoritesOption({
+  options,
+  providers,
+}: {
+  options: SelectOption[]
+  providers: Array<{ id: string; models?: Record<string, unknown> }>
+}): SelectOption[] {
+  if (!isOmoEngine()) return options
+  const favorites = getAvailableOmoFavorites(providers)
+  if (favorites.length === 0) return options
+  return [
+    {
+      label: '⭐ Favorites (omo)',
+      value: FAVORITES_PROVIDER_VALUE,
+      description: `${favorites.length} favorite model${favorites.length !== 1 ? 's' : ''} from omo settings`,
+    },
+    ...options,
+  ]
 }
 
 export type ProviderInfo = {
@@ -675,7 +704,7 @@ export async function handleModelCommand({
       .filter((option): option is NonNullable<typeof option> => !!option)
 
     const { options } = buildPaginatedOptions({
-      allOptions: allProviderOptions,
+      allOptions: withOmoFavoritesOption({ options: allProviderOptions, providers: availableProviders }),
       page: 0,
     })
 
@@ -867,7 +896,10 @@ export async function handleProviderSelectMenu(
         })
       })
       .filter((option): option is NonNullable<typeof option> => !!option)
-    const { options } = buildPaginatedOptions({ allOptions: allProviderOptions, page: providerNavPage })
+    const { options } = buildPaginatedOptions({
+      allOptions: withOmoFavoritesOption({ options: allProviderOptions, providers: availableProviders }),
+      page: providerNavPage,
+    })
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`model_provider:${contextHash}`)
       .setPlaceholder('Select a provider')
@@ -898,6 +930,39 @@ export async function handleProviderSelectMenu(
       await interaction.editReply({
         content: 'Failed to fetch providers',
         components: [],
+      })
+      return
+    }
+
+    if (selectedProviderId === FAVORITES_PROVIDER_VALUE) {
+      const favorites = getAvailableOmoFavorites(providersResponse.data.all)
+      const favoriteOptions = favorites
+        .map((favorite) => {
+          const model = providersResponse.data!.all
+            .find((p) => p.id === favorite.providerID)?.models?.[favorite.modelID]
+          return buildSafeSelectOption({
+            label: model?.name || favorite.modelID,
+            value: `${favorite.providerID}/${favorite.modelID}${favorite.variant ? `:${favorite.variant}` : ''}`,
+            description: [favorite.providerID, favorite.variant].filter(Boolean).join(' · '),
+          })
+        })
+        .filter((option): option is NonNullable<typeof option> => !!option)
+      if (favoriteOptions.length === 0) {
+        await interaction.editReply({ content: 'No favorite models are available.', components: [] })
+        return
+      }
+      context.providerId = FAVORITES_PROVIDER_VALUE
+      context.providerName = 'Favorites'
+      context.modelPage = 0
+      setModelContext(contextHash, context)
+      const { options } = buildPaginatedOptions({ allOptions: favoriteOptions, page: 0 })
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`model_select:${contextHash}`)
+        .setPlaceholder('Select a favorite model')
+        .addOptions(options)
+      await interaction.editReply({
+        content: '**Set Model Preference**\nomo favorites:\nSelect a model:',
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)],
       })
       return
     }
@@ -1054,6 +1119,39 @@ export async function handleModelSelectMenu(
     return
   }
 
+  // omo favorites carry their own provider and optional thinking level.
+  if (context.providerId === FAVORITES_PROVIDER_VALUE) {
+    const favorite = parseFavorite(selectedModelId)
+    if (!favorite) {
+      await interaction.editReply({ content: 'Invalid favorite model', components: [] })
+      return
+    }
+    context.providerId = favorite.providerID
+    context.providerName = favorite.providerID
+    if (favorite.variant) {
+      context.selectedModelId = `${favorite.providerID}/${favorite.modelID}`
+      context.selectedVariant = favorite.variant
+      setModelContext(contextHash, context)
+      await showScopeMenu({ interaction, contextHash, context })
+      return
+    }
+    return selectModelForProvider({ interaction, contextHash, context, selectedModelId: favorite.modelID })
+  }
+
+  return selectModelForProvider({ interaction, contextHash, context, selectedModelId })
+}
+
+async function selectModelForProvider({
+  interaction,
+  contextHash,
+  context,
+  selectedModelId,
+}: {
+  interaction: StringSelectMenuInteraction
+  contextHash: string
+  context: PendingModelContext
+  selectedModelId: string
+}): Promise<void> {
   // Build full model ID: provider_id/model_id
   const fullModelId = `${context.providerId}/${selectedModelId}`
 

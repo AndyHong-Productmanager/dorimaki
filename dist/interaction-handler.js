@@ -22,6 +22,8 @@ import { handleForkSubagentCommand, handleForkSubagentSelectMenu, } from './comm
 import { handleBtwCommand } from './commands/btw.js';
 import { handleModelCommand, handleProviderSelectMenu, handleModelSelectMenu, handleModelScopeSelectMenu, } from './commands/model.js';
 import { handleLoginCommand, handleLoginSelect, handleLoginTextButton, handleLoginTextModalSubmit, handleLoginApiKeyButton, handleOAuthCodeButton, handleOAuthCodeModalSubmit, handleApiKeyModalSubmit, } from './commands/login.js';
+import { handleOmoLoginButton, handleOmoLoginCommand, handleOmoLoginModalSubmit, handleOmoLoginSelect, } from './commands/omo-login.js';
+import { isOmoEngine } from './omo/client.js';
 import { handleTranscriptionApiKeyButton, handleTranscriptionApiKeyCommand, handleTranscriptionApiKeyModalSubmit, } from './commands/gemini-apikey.js';
 import { handleAgentCommand, handleAgentSelectMenu, handleQuickAgentCommand, handleQuickAgentAutocomplete, } from './commands/agent.js';
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js';
@@ -248,6 +250,10 @@ export function registerInteractionHandler({ discordClient, appId, }) {
                                 });
                                 return;
                             }
+                            if (isOmoEngine()) {
+                                await handleOmoLoginCommand(interaction);
+                                return;
+                            }
                             await handleLoginCommand({ interaction, appId });
                             return;
                         case 'agent':
@@ -339,6 +345,17 @@ export function registerInteractionHandler({ discordClient, appId, }) {
                         return;
                     }
                     const customId = interaction.customId;
+                    if (customId.startsWith('omo_login_')) {
+                        if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
+                            await interaction.reply({
+                                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
+                                flags: MessageFlags.Ephemeral,
+                            });
+                            return;
+                        }
+                        await handleOmoLoginButton(interaction);
+                        return;
+                    }
                     if (customId.startsWith('transcription_apikey:')) {
                         if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
                             await interaction.reply({
@@ -416,6 +433,17 @@ export function registerInteractionHandler({ discordClient, appId, }) {
                         return;
                     }
                     const customId = interaction.customId;
+                    if (customId.startsWith('omo_login_')) {
+                        if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
+                            await interaction.reply({
+                                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
+                                flags: MessageFlags.Ephemeral,
+                            });
+                            return;
+                        }
+                        await handleOmoLoginSelect(interaction);
+                        return;
+                    }
                     if (customId.startsWith('fork_select:')) {
                         await handleForkSelectMenu(interaction);
                         return;
@@ -486,6 +514,17 @@ export function registerInteractionHandler({ discordClient, appId, }) {
                         return;
                     }
                     const customId = interaction.customId;
+                    if (customId.startsWith('omo_login_')) {
+                        if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
+                            await interaction.reply({
+                                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
+                                flags: MessageFlags.Ephemeral,
+                            });
+                            return;
+                        }
+                        await handleOmoLoginModalSubmit(interaction);
+                        return;
+                    }
                     if (customId.startsWith('login_apikey:')) {
                         if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
                             await interaction.reply({
