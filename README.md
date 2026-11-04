@@ -67,9 +67,15 @@ First run walks you through creating a self-hosted Discord bot:
 
 ## Status
 
-Early development. Works: sessions, streaming text/reasoning/tool parts, model selection, thinking variants, permission and question prompts, abort, history, compaction, skills as slash commands, session titles, recovery after an omo restart.
+Early development. Works: sessions, streaming text/reasoning/tool parts, model selection, thinking variants, permission and question prompts, abort, history, compaction, session titles, recovery after an omo restart.
 
-Not supported yet: undo (`revert`/`unrevert`), `fork`, omo `input`/`editor` dialogs (auto-cancelled), and kimaki's OpenCode plugin tools (action buttons, file upload, sleep) which are not registered with omo. See commit history for progress.
+omo features in Discord:
+
+- `/model` lists omo's signed-in models, with your omo favorites (`favoriteModels` in omo's `settings.json`, including `:level` suffixes) as a **⭐ Favorites (omo)** entry at the top.
+- `/login` signs in to omo's browser (OAuth) providers through `login_start`: pick a provider, open the link, and paste the redirect URL or code when the bot runs headless. API keys are not accepted in Discord; add them with the omo CLI on the bot machine.
+- omo skills are slash commands (`/<skill>-skill`), and a curated set of omo commands too (`/goal-cmd`, `/loop-cmd`, `/handoff-cmd`, `/fast-cmd`, `/efforts-cmd`, `/reasoning-cmd`, `/fallback-cmd`, `/tasks-cmd`, `/task-kill-cmd`, `/todo-cmd`, `/remember-cmd`, `/memory-cmd`, `/search-cmd`, `/account-cmd`, `/agreements-cmd`). Their output appears in the thread and menus become Discord dropdowns.
+
+Not supported yet: undo (`revert`/`unrevert`), `fork`, omo `input`/`editor` dialogs outside login (auto-cancelled), and kimaki's OpenCode plugin tools (action buttons, file upload, sleep) which are not registered with omo. See commit history for progress.
 
 ## License
 
