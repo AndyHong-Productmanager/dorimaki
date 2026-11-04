@@ -273,7 +273,8 @@ export async function callControl(
   throw new Error(`omo ${type} failed`)
 }
 
-async function openControl(cwd: string): Promise<{ conn: OmoRpcConnection; handle: string; state: Json }> {
+/** Hidden worker session for host-level commands (models, logins). */
+export async function openControl(cwd: string): Promise<{ conn: OmoRpcConnection; handle: string; state: Json }> {
   const cached = controlHandles.get(cwd)
   if (cached && !cached.conn.isClosed) return cached
   const conn = await getOmoConnection()

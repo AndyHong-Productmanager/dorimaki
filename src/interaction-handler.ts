@@ -68,6 +68,13 @@ import {
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
+  handleOmoLoginButton,
+  handleOmoLoginCommand,
+  handleOmoLoginModalSubmit,
+  handleOmoLoginSelect,
+} from './commands/omo-login.js'
+import { isOmoEngine } from './omo/client.js'
+import {
   handleTranscriptionApiKeyButton,
   handleTranscriptionApiKeyCommand,
   handleTranscriptionApiKeyModalSubmit,
@@ -381,6 +388,10 @@ export function registerInteractionHandler({
                 })
                 return
               }
+              if (isOmoEngine()) {
+                await handleOmoLoginCommand(interaction)
+                return
+              }
               await handleLoginCommand({ interaction, appId })
               return
 
@@ -499,6 +510,18 @@ export function registerInteractionHandler({
 
           const customId = interaction.customId
 
+          if (customId.startsWith('omo_login_')) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
+              await interaction.reply({
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+            await handleOmoLoginButton(interaction)
+            return
+          }
+
           if (customId.startsWith('transcription_apikey:')) {
             if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
               await interaction.reply({
@@ -590,6 +613,18 @@ export function registerInteractionHandler({
 
           const customId = interaction.customId
 
+          if (customId.startsWith('omo_login_')) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
+              await interaction.reply({
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+            await handleOmoLoginSelect(interaction)
+            return
+          }
+
           if (customId.startsWith('fork_select:')) {
             await handleForkSelectMenu(interaction)
             return
@@ -674,6 +709,18 @@ export function registerInteractionHandler({
           }
 
           const customId = interaction.customId
+
+          if (customId.startsWith('omo_login_')) {
+            if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {
+              await interaction.reply({
+                content: `Only server admins or users with the **Dorimaki** role can configure login credentials.`,
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+            await handleOmoLoginModalSubmit(interaction)
+            return
+          }
 
           if (customId.startsWith('login_apikey:')) {
             if (!hasDorimakiAdminPermission(interaction.member, interaction.guild)) {

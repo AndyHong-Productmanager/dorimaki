@@ -216,7 +216,8 @@ export async function callControl(cwd, type, params = {}) {
     }
     throw new Error(`omo ${type} failed`);
 }
-async function openControl(cwd) {
+/** Hidden worker session for host-level commands (models, logins). */
+export async function openControl(cwd) {
     const cached = controlHandles.get(cwd);
     if (cached && !cached.conn.isClosed)
         return cached;
