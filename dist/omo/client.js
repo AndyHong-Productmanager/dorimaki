@@ -236,12 +236,11 @@ async function ensureModel(sessionID, model) {
 async function sendPrompt(sessionID, payload) {
     const busy = sessionStatus.get(sessionID)?.type === 'busy';
     try {
-        await callSession(sessionID, 'prompt', busy ? { ...payload, streamingBehavior: 'followUp' } : payload);
+        return await callSession(sessionID, 'prompt', busy ? { ...payload, streamingBehavior: 'followUp' } : payload);
     }
     catch (e) {
         if (!busy && e instanceof OmoRpcError && e.code === 'streaming') {
-            await callSession(sessionID, 'prompt', { ...payload, streamingBehavior: 'followUp' });
-            return;
+            return callSession(sessionID, 'prompt', { ...payload, streamingBehavior: 'followUp' });
         }
         throw e;
     }
@@ -266,11 +265,18 @@ async function promptSession(params) {
         const thinkingLevel = model && variant && getSupportedThinkingLevels(model).includes(variant)
             ? variant
             : undefined;
-        await sendPrompt(sessionID, {
+        const result = await sendPrompt(sessionID, {
             message,
             ...(images.length > 0 ? { images } : {}),
             ...(thinkingLevel ? { thinkingLevel } : {}),
         });
+        // Extension commands such as /efforts run without starting a turn.
+        // dorimaki still waits for an idle event to stop typing, so send one.
+        if (result?.disposition === 'handled' && sessionStatus.get(sessionID)?.type !== 'busy') {
+            emitToAll({ type: 'session.status', properties: { sessionID, status: { type: 'idle' } } });
+            emitToAll({ type: 'session.idle', properties: { sessionID } });
+            return { data: {} };
+        }
         sessionStatus.set(sessionID, { type: 'busy' });
         return { data: {} };
     }

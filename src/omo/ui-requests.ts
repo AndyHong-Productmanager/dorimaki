@@ -150,12 +150,16 @@ export function translateUiRequest({
     case 'editor':
       return { kind: 'cancel', reason: `${record.method} dialogs are not supported in Discord` }
     case 'notify': {
-      if (record.notifyType !== 'error' || typeof record.message !== 'string') return { kind: 'ignore' }
+      // Command output (/efforts, /tasks, ...) arrives as notifications.
+      // dorimaki's toast handler drops `warning`, so warnings ride as info.
+      if (typeof record.message !== 'string' || !record.message.trim()) return { kind: 'ignore' }
+      const isError = record.notifyType === 'error'
+      const prefix = record.notifyType === 'warning' ? '⚠️ ' : ''
       return {
         kind: 'toast',
         event: {
           type: 'tui.toast.show',
-          properties: { message: `${record.message} ${sessionID}`, variant: 'error' },
+          properties: { message: `${prefix}${record.message} ${sessionID}`, variant: isError ? 'error' : 'info' },
         },
       }
     }

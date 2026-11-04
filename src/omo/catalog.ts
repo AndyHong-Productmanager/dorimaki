@@ -10,6 +10,28 @@ type Json = Record<string, any>
 
 const CACHE_TTL_MS = 60_000
 
+// omo extension commands that work over RPC and make sense in Discord. The
+// rest are terminal helpers (/hooks, /keybindings, /diff, ...) or already
+// have a dorimaki equivalent (/btw, /mcp). Kept short so skills still fit
+// in Discord's 100 slash command limit.
+const DISCORD_EXTENSION_COMMANDS = new Set([
+  'goal',
+  'loop',
+  'handoff',
+  'fast',
+  'efforts',
+  'reasoning',
+  'fallback',
+  'tasks',
+  'task-kill',
+  'todo',
+  'remember',
+  'memory',
+  'search',
+  'account',
+  'agreements',
+])
+
 type ModelCatalog = {
   models: Json[]
   defaultModel: OmoModelRef | undefined
@@ -110,11 +132,12 @@ export async function getDefaultModelId(): Promise<string | undefined> {
 export async function listCommands(cwd: string): Promise<Json[]> {
   const { data } = await callControl(cwd || os.homedir(), 'get_commands')
   const commands: Json[] = Array.isArray(data?.commands) ? data.commands : []
-  // Extension commands are mostly terminal UI helpers (/hooks, /answer, ...);
-  // only skills and prompt templates make sense as Discord slash commands.
   return commands
     .filter((command) => typeof command.name === 'string' && command.name)
-    .filter((command) => command.source === 'skill' || command.source === 'prompt')
+    .filter((command) => {
+      if (command.source === 'skill' || command.source === 'prompt') return true
+      return command.source === 'extension' && DISCORD_EXTENSION_COMMANDS.has(command.name)
+    })
     .map((command) => ({
       name: String(command.name).replace(/^skill:/, ''),
       description: typeof command.description === 'string' ? command.description : '',
