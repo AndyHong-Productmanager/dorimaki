@@ -45,6 +45,11 @@ import { createDebouncedProcessFlush } from '../debounced-process-flush.js';
 import { cancelHtmlActionsForThread } from '../html-actions.js';
 import { createDebouncedTimeout } from '../debounce-timeout.js';
 import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js';
+import { isOmoEngine } from '../omo/client.js';
+// User-facing engine name: dorimaki runs omo by default, OpenCode with DORIMAKI_ENGINE=opencode.
+function getEngineLabel() {
+    return isOmoEngine() ? 'omo' : 'OpenCode';
+}
 const logger = createLogger(LogPrefix.SESSION);
 const discordLogger = createLogger(LogPrefix.DISCORD);
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000;
@@ -2724,7 +2729,7 @@ export class ThreadSessionRuntime {
                     ? promptResult
                     : new Error(errorMessage);
                 void notifyError(errObj, 'promptAsync failed in submitViaOpencodeQueue');
-                await cleanupOnError(`✗ OpenCode API error: ${errorMessage}`);
+                await cleanupOnError(`✗ ${getEngineLabel()} API error: ${errorMessage}`);
                 return;
             }
             if (input.sessionStartSource?.scheduledTaskRunId) {
@@ -3706,7 +3711,7 @@ export class ThreadSessionRuntime {
                     this.stopTyping();
                     return true;
                 }
-                const apiError = new Error(`OpenCode API error: ${errorMessage}`);
+                const apiError = new Error(`${getEngineLabel()} API error: ${errorMessage}`);
                 logger.error(`[DISPATCH] ${apiError.message}`);
                 void notifyError(apiError, 'OpenCode API error during command');
                 this.stopTyping();
@@ -3746,7 +3751,7 @@ export class ThreadSessionRuntime {
             logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`);
             void notifyError(errorObject, 'OpenCode API error during local queue prompt');
             this.stopTyping();
-            await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`, {
+            await sendThreadMessage(this.thread, `✗ ${getEngineLabel()} API error: ${errorMessage}`, {
                 flags: NOTIFY_MESSAGE_FLAGS,
             });
             return false;
