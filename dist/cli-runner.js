@@ -3,6 +3,7 @@
 import { outro, text, password, note, cancel, isCancel, confirm, multiselect, select, spinner, } from '@clack/prompts';
 import { deduplicateByKey, generateBotInstallUrl, generateDiscordInstallUrlForBot, DORIMAKI_GATEWAY_APP_ID, DORIMAKI_WEBSITE_URL, abbreviatePath, } from './utils.js';
 import { getChannelsWithDescriptions, createDiscordClient, initDatabase, startDiscordBot, registerBotLifecycleHandlers, initializeOpencodeForDirectory, assertCompatibleOpencodeVersion, createProjectChannels, createDefaultDorimakiChannel, } from './discord-bot.js';
+import { isOmoEngine } from './omo/client.js';
 import { getBotTokenWithMode, ensureServiceAuthToken, setBotToken, setBotMode, setChannelDirectory, findChannelsByDirectory, getDb, } from './database.js';
 import * as orm from 'drizzle-orm';
 import * as dbSchema from './schema.js';
@@ -1138,25 +1139,36 @@ export async function run({ restartOnboarding, addChannels, useWorktrees, enable
     startCaffeinate();
     const forceRestartOnboarding = Boolean(restartOnboarding);
     const forceGateway = Boolean(gateway);
-    // Step 0: Ensure opencode and bun are installed
+    // Step 0: Ensure the engine (omo by default, opencode with
+    // DORIMAKI_ENGINE=opencode) and bun are installed
+    const omoEngine = isOmoEngine();
     await Promise.all([
-        ensureCommandAvailable({
-            name: 'opencode',
-            envPathKey: 'OPENCODE_PATH',
-            installUnix: 'curl -fsSL https://opencode.ai/install | bash',
-            installWindows: 'irm https://opencode.ai/install.ps1 | iex',
-            possiblePathsUnix: [
-                '~/.local/bin/opencode',
-                '~/.opencode/bin/opencode',
-                '/usr/local/bin/opencode',
-                '/opt/opencode/bin/opencode',
-            ],
-            possiblePathsWindows: [
-                '~\\.local\\bin\\opencode.exe',
-                '~\\AppData\\Local\\opencode\\opencode.exe',
-                '~\\.opencode\\bin\\opencode.exe',
-            ],
-        }),
+        omoEngine
+            ? ensureCommandAvailable({
+                name: 'omo',
+                envPathKey: 'DORIMAKI_OMO_BIN',
+                installUnix: 'curl -fsSL https://get.omo.dev/install.sh | bash',
+                installWindows: 'npm install -g omo-ai',
+                possiblePathsUnix: ['~/.npm-global/bin/omo', '~/.local/bin/omo', '/usr/local/bin/omo'],
+                possiblePathsWindows: [],
+            })
+            : ensureCommandAvailable({
+                name: 'opencode',
+                envPathKey: 'OPENCODE_PATH',
+                installUnix: 'curl -fsSL https://opencode.ai/install | bash',
+                installWindows: 'irm https://opencode.ai/install.ps1 | iex',
+                possiblePathsUnix: [
+                    '~/.local/bin/opencode',
+                    '~/.opencode/bin/opencode',
+                    '/usr/local/bin/opencode',
+                    '/opt/opencode/bin/opencode',
+                ],
+                possiblePathsWindows: [
+                    '~\\.local\\bin\\opencode.exe',
+                    '~\\AppData\\Local\\opencode\\opencode.exe',
+                    '~\\.opencode\\bin\\opencode.exe',
+                ],
+            }),
         ensureCommandAvailable({
             name: 'bun',
             envPathKey: 'BUN_PATH',
@@ -1166,7 +1178,8 @@ export async function run({ restartOnboarding, addChannels, useWorktrees, enable
             possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
         }),
     ]);
-    const opencodeVersionCheck = await assertCompatibleOpencodeVersion();
+    // The OpenCode version gate only applies when OpenCode is the engine.
+    const opencodeVersionCheck = omoEngine ? true : await assertCompatibleOpencodeVersion();
     if (opencodeVersionCheck instanceof Error) {
         cliLogger.error(opencodeVersionCheck.message);
         process.exit(EXIT_NO_RESTART);
