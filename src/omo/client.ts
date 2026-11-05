@@ -275,13 +275,20 @@ async function ensureModel(sessionID: string, model: OmoModelRef | undefined): P
   setLiveModel(sessionID, modelRefFromState(data) ?? model)
 }
 
+// omo refuses a thinkingLevel on a prompt queued behind a running turn, so
+// queued prompts drop it and run at the session's current level.
+function queuedPrompt(payload: Json): Json {
+  const { thinkingLevel: _thinkingLevel, ...rest } = payload
+  return { ...rest, streamingBehavior: 'followUp' }
+}
+
 async function sendPrompt(sessionID: string, payload: Json): Promise<Json> {
   const busy = sessionStatus.get(sessionID)?.type === 'busy'
   try {
-    return await callSession(sessionID, 'prompt', busy ? { ...payload, streamingBehavior: 'followUp' } : payload)
+    return await callSession(sessionID, 'prompt', busy ? queuedPrompt(payload) : payload)
   } catch (e) {
     if (!busy && e instanceof OmoRpcError && e.code === 'streaming') {
-      return callSession(sessionID, 'prompt', { ...payload, streamingBehavior: 'followUp' })
+      return callSession(sessionID, 'prompt', queuedPrompt(payload))
     }
     throw e
   }
