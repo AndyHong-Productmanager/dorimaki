@@ -255,14 +255,19 @@ function buildPromptInput(sessionID: string, params: Json): PromptInput {
   return { message: texts.join('\n\n'), images, context }
 }
 
-async function sendContext(sessionID: string, context: string[]): Promise<void> {
+// While a run is active the prompt is steered into it, so the context must be
+// steered too: a nextTurn message would wait for a later prompt and attach to
+// the wrong user message. Steered context lands just before its prompt, and
+// agentMessagesToOpencode folds it into the user message that follows.
+async function sendContext(sessionID: string, context: string[], busy: boolean): Promise<void> {
   if (context.length === 0) return
   await callSession(sessionID, 'send_custom_message', {
     customType: 'dorimaki-context',
     content: context.join('\n\n'),
     display: false,
-    triggerTurn: false,
-    deliverAs: 'nextTurn',
+    ...(busy
+      ? { triggerTurn: true, deliverAs: 'steer' }
+      : { triggerTurn: false, deliverAs: 'nextTurn' }),
   })
 }
 
@@ -275,15 +280,15 @@ async function ensureModel(sessionID: string, model: OmoModelRef | undefined): P
   setLiveModel(sessionID, modelRefFromState(data) ?? model)
 }
 
-// omo refuses a thinkingLevel on a prompt queued behind a running turn, so
-// queued prompts drop it and run at the session's current level.
+// A message sent during a run steers it: omo delivers it at the next tool
+// boundary instead of after the whole run, like OpenCode does. omo refuses a
+// thinkingLevel on such a prompt, so it runs at the session's current level.
 function queuedPrompt(payload: Json): Json {
   const { thinkingLevel: _thinkingLevel, ...rest } = payload
-  return { ...rest, streamingBehavior: 'followUp' }
+  return { ...rest, streamingBehavior: 'steer' }
 }
 
-async function sendPrompt(sessionID: string, payload: Json): Promise<Json> {
-  const busy = sessionStatus.get(sessionID)?.type === 'busy'
+async function sendPrompt(sessionID: string, payload: Json, busy: boolean): Promise<Json> {
   try {
     return await callSession(sessionID, 'prompt', busy ? queuedPrompt(payload) : payload)
   } catch (e) {
@@ -306,7 +311,8 @@ async function promptSession(params: Json): Promise<{ data?: Json; error?: unkno
     }
     const model = parseModel(params.model)
     await ensureModel(sessionID, model)
-    await sendContext(sessionID, context)
+    const busy = sessionStatus.get(sessionID)?.type === 'busy'
+    await sendContext(sessionID, context, busy)
     if (model) await getModelCatalog().catch(() => undefined)
     const variant: string | undefined = typeof params.variant === 'string' ? params.variant : undefined
     const thinkingLevel = model && variant && getSupportedThinkingLevels(model).includes(variant)
@@ -316,7 +322,7 @@ async function promptSession(params: Json): Promise<{ data?: Json; error?: unkno
       message,
       ...(images.length > 0 ? { images } : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
-    })
+    }, busy)
     // Extension commands such as /efforts run without starting a turn.
     // dorimaki still waits for an idle event to stop typing, so send one.
     if (result?.disposition === 'handled' && sessionStatus.get(sessionID)?.type !== 'busy') {

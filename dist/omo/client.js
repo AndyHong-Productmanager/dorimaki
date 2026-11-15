@@ -211,15 +211,20 @@ function buildPromptInput(sessionID, params) {
     }
     return { message: texts.join('\n\n'), images, context };
 }
-async function sendContext(sessionID, context) {
+// While a run is active the prompt is steered into it, so the context must be
+// steered too: a nextTurn message would wait for a later prompt and attach to
+// the wrong user message. Steered context lands just before its prompt, and
+// agentMessagesToOpencode folds it into the user message that follows.
+async function sendContext(sessionID, context, busy) {
     if (context.length === 0)
         return;
     await callSession(sessionID, 'send_custom_message', {
         customType: 'dorimaki-context',
         content: context.join('\n\n'),
         display: false,
-        triggerTurn: false,
-        deliverAs: 'nextTurn',
+        ...(busy
+            ? { triggerTurn: true, deliverAs: 'steer' }
+            : { triggerTurn: false, deliverAs: 'nextTurn' }),
     });
 }
 async function ensureModel(sessionID, model) {
@@ -233,14 +238,14 @@ async function ensureModel(sessionID, model) {
     const data = await callSession(sessionID, 'set_model', { provider: model.provider, modelId: model.id });
     setLiveModel(sessionID, modelRefFromState(data) ?? model);
 }
-// omo refuses a thinkingLevel on a prompt queued behind a running turn, so
-// queued prompts drop it and run at the session's current level.
+// A message sent during a run steers it: omo delivers it at the next tool
+// boundary instead of after the whole run, like OpenCode does. omo refuses a
+// thinkingLevel on such a prompt, so it runs at the session's current level.
 function queuedPrompt(payload) {
     const { thinkingLevel: _thinkingLevel, ...rest } = payload;
-    return { ...rest, streamingBehavior: 'followUp' };
+    return { ...rest, streamingBehavior: 'steer' };
 }
-async function sendPrompt(sessionID, payload) {
-    const busy = sessionStatus.get(sessionID)?.type === 'busy';
+async function sendPrompt(sessionID, payload, busy) {
     try {
         return await callSession(sessionID, 'prompt', busy ? queuedPrompt(payload) : payload);
     }
@@ -264,7 +269,8 @@ async function promptSession(params) {
         }
         const model = parseModel(params.model);
         await ensureModel(sessionID, model);
-        await sendContext(sessionID, context);
+        const busy = sessionStatus.get(sessionID)?.type === 'busy';
+        await sendContext(sessionID, context, busy);
         if (model)
             await getModelCatalog().catch(() => undefined);
         const variant = typeof params.variant === 'string' ? params.variant : undefined;
@@ -275,7 +281,7 @@ async function promptSession(params) {
             message,
             ...(images.length > 0 ? { images } : {}),
             ...(thinkingLevel ? { thinkingLevel } : {}),
-        });
+        }, busy);
         // Extension commands such as /efforts run without starting a turn.
         // dorimaki still waits for an idle event to stop typing, so send one.
         if (result?.disposition === 'handled' && sessionStatus.get(sessionID)?.type !== 'busy') {

@@ -2,7 +2,7 @@
   "name": "dorimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",
   "exports": {
