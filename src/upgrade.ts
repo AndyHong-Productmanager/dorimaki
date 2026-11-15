@@ -4,6 +4,8 @@
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
 
 import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { createLogger, LogPrefix } from './logger.js'
 import { execAsync } from './worktrees.js'
@@ -89,8 +91,45 @@ export async function getLatestNpmVersion(): Promise<string | null> {
   }
 }
 
+// dorimaki is not published to npm; it runs from a git checkout whose committed
+// dist/ is the shipped build. Returns the checkout root, or null for npm installs.
+function getGitCheckoutDir(): string | null {
+  const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  return fs.existsSync(path.join(dir, '.git')) ? dir : null
+}
+
+function readPackageVersion(dir: string): string {
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as { version: string }
+  return pkg.version
+}
+
+async function upgradeFromGit(dir: string): Promise<string | null> {
+  const git = (args: string[]) =>
+    execAsync({ command: 'git', args }, { cwd: dir, timeout: 120_000 }).then((r) => r.stdout.trim())
+  await git(['fetch', '--quiet'])
+  const head = await git(['rev-parse', 'HEAD'])
+  const upstream = await git(['rev-parse', '@{u}'])
+  if (head === upstream) {
+    return null
+  }
+  logger.log(`Upgrading dorimaki checkout ${dir} with git pull --ff-only...`)
+  await git(['pull', '--ff-only', '--quiet'])
+  const sha = await git(['rev-parse', '--short', 'HEAD'])
+  return `${readPackageVersion(dir)} (${sha})`
+}
+
+// Command that restarts the bot with the same entry script, instead of a bare
+// `dorimaki` that only exists on PATH for global npm installs.
+export function getRestartCommand(args: string[]): { command: string; args: string[] } {
+  return { command: process.execPath, args: [process.argv[1]!, ...args] }
+}
+
 // Returns the new version string if upgraded, null if already up to date.
 export async function upgrade(): Promise<string | null> {
+  const gitDir = getGitCheckoutDir()
+  if (gitDir) {
+    return upgradeFromGit(gitDir)
+  }
   const current = getCurrentVersion()
   const latest = await getLatestNpmVersion()
   if (!latest) {
@@ -110,6 +149,11 @@ export async function upgrade(): Promise<string | null> {
 // Fire-and-forget background upgrade check on bot startup.
 // Only upgrades if a newer version is available. Errors are silently ignored.
 export async function backgroundUpgradeDorimaki(): Promise<void> {
+  // A git checkout is updated only on request; an npm package with the same
+  // name must never be installed over it.
+  if (getGitCheckoutDir()) {
+    return
+  }
   try {
     const current = getCurrentVersion()
     const latest = await getLatestNpmVersion()

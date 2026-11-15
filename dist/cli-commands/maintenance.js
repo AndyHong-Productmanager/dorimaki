@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createLogger, LogPrefix } from '../logger.js';
 import { createDiscordRest } from '../discord-urls.js';
 import { execAsync } from '../worktrees.js';
-import { upgrade, getCurrentVersion } from '../upgrade.js';
+import { upgrade, getCurrentVersion, getRestartCommand } from '../upgrade.js';
 import { EXIT_NO_RESTART, resolveBotCredentials, } from '../cli-runner.js';
 const cliLogger = createLogger(LogPrefix.CLI);
 const cli = goke();
@@ -30,8 +30,8 @@ cli
         // Spawn a new dorimaki process without args (starts the bot with default command).
         // The new process kills the old one via the single-instance lock.
         // No args passed to avoid recursively running `upgrade` again.
-        const child = spawn('dorimaki', [], {
-            shell: true,
+        const restart = getRestartCommand([]);
+        const child = spawn(restart.command, restart.args, {
             stdio: 'ignore',
             detached: true,
         });

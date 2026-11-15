@@ -4,7 +4,7 @@
 
 import type { CommandContext } from './types.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getCurrentVersion, upgrade } from '../upgrade.js'
+import { getCurrentVersion, getRestartCommand, upgrade } from '../upgrade.js'
 import { spawn } from 'node:child_process'
 
 const logger = createLogger(LogPrefix.CLI)
@@ -31,12 +31,8 @@ export async function handleUpgradeAndRestartCommand({
       content: `Upgraded dorimaki **v${currentVersion}** -> **v${newVersion}**. Restarting bot...`,
     })
 
-    // Spawning bare `dorimaki` works even if the user originally ran via npx/bunx:
-    // `npm i -g dorimaki@latest` creates a global bin link, and npx resolves
-    // local -> global -> cache -> registry, so it prefers the global install.
-    // bunx shares the same global cache, so it also picks up the new version.
-    const child = spawn('dorimaki', process.argv.slice(2), {
-      shell: true,
+    const restart = getRestartCommand(process.argv.slice(2))
+    const child = spawn(restart.command, restart.args, {
       stdio: 'ignore',
       detached: true,
     })

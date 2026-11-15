@@ -23,7 +23,7 @@ import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
-import { upgrade, getCurrentVersion } from '../upgrade.js'
+import { upgrade, getCurrentVersion, getRestartCommand } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
   EXIT_NO_RESTART,
@@ -68,8 +68,8 @@ cli
       // Spawn a new dorimaki process without args (starts the bot with default command).
       // The new process kills the old one via the single-instance lock.
       // No args passed to avoid recursively running `upgrade` again.
-      const child = spawn('dorimaki', [], {
-        shell: true,
+      const restart = getRestartCommand([])
+      const child = spawn(restart.command, restart.args, {
         stdio: 'ignore',
         detached: true,
       })
