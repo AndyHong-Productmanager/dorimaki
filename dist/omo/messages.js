@@ -123,6 +123,10 @@ export function completedToolState({ args, result, start, end, }) {
         time: { start, end },
     };
 }
+// dorimaki sends Discord context (including the <discord-user /> origin tag)
+// through `send_custom_message`, so omo stores it as a separate `custom`
+// message next to the user message instead of inside it.
+const DORIMAKI_CONTEXT_TYPE = 'dorimaki-context';
 /** History conversion for `session.messages`. */
 export function agentMessagesToOpencode({ sessionID, messages, cwd, }) {
     const toolResults = new Map();
@@ -132,19 +136,53 @@ export function agentMessagesToOpencode({ sessionID, messages, cwd, }) {
         }
     }
     const result = [];
+    const userTurns = [];
+    const userTurnsWithContext = new Set();
+    let openUserTurn;
+    let pendingContext = [];
+    const attachContext = (turn, text) => {
+        turn.parts.push({
+            id: contentPartId(turn.info.id, turn.parts.length),
+            sessionID,
+            messageID: turn.info.id,
+            type: 'text',
+            text,
+            synthetic: true,
+        });
+        userTurnsWithContext.add(turn);
+    };
     let parentID;
     for (const message of messages) {
+        if (message?.role === 'custom' && message.customType === DORIMAKI_CONTEXT_TYPE) {
+            const text = userText(message);
+            if (!text)
+                continue;
+            // Context normally lands right after its user message; if it shows up
+            // before one, hold it for the next user message.
+            if (openUserTurn)
+                attachContext(openUserTurn, text);
+            else
+                pendingContext.push(text);
+            continue;
+        }
         if (message?.role === 'user') {
             const info = buildUserInfo({ sessionID, message });
             parentID = info.id;
-            result.push({
+            const turn = {
                 info,
                 parts: [{ id: contentPartId(info.id, 0), sessionID, messageID: info.id, type: 'text', text: userText(message) }],
-            });
+            };
+            result.push(turn);
+            userTurns.push(turn);
+            for (const text of pendingContext)
+                attachContext(turn, text);
+            pendingContext = [];
+            openUserTurn = turn;
             continue;
         }
         if (message?.role !== 'assistant')
             continue;
+        openUserTurn = undefined;
         const timestamp = typeof message.timestamp === 'number' ? message.timestamp : Date.now();
         const info = buildAssistantInfo({ sessionID, message, parentID, cwd, completedAt: timestamp });
         const parts = [{ id: stepPartId(info.id, 'start'), sessionID, messageID: info.id, type: 'step-start' }];
@@ -179,6 +217,15 @@ export function agentMessagesToOpencode({ sessionID, messages, cwd, }) {
             tokens: info.tokens,
         });
         result.push({ info, parts });
+    }
+    // Every prompt dorimaki sends carries dorimaki-context. A user message
+    // without it was injected by an extension (e.g. a question timeout notice),
+    // not typed by a person, so it must not be mirrored or read as an external
+    // takeover of the session.
+    for (const turn of userTurns) {
+        if (userTurnsWithContext.has(turn))
+            continue;
+        turn.parts[0].synthetic = true;
     }
     return result;
 }
